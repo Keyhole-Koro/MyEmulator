@@ -87,8 +87,10 @@ void CPU::executeInstruction(const std::string& instruction) {
         registers[reg] = ~registers[reg];
         updateZeroFlag(registers[reg]);
     } else if (opcode == "JMP") {
+        printf("Jumping to instruction %s\n", tokens[1].c_str());
         pc = parseOperand(tokens[1]) - 1;
     } else if (opcode == "JZ") {
+        printf("Jumping to instruction %s\n", tokens[1].c_str());
         if (zeroFlag) {
             pc = parseOperand(tokens[1]) - 1;
         }
