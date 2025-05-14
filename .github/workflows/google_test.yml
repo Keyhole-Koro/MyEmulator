@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up C++ environment
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential cmake libgtest-dev
+
+    - name: Build Google Test
+      run: |
+        cd /usr/src/gtest
+        sudo cmake .
+        sudo make
+        sudo cp *.a /usr/lib
+
+    - name: Build project
+      run: |
+        make clean
+        make
+
+    - name: Run tests
+      run: make test
