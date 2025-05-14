@@ -23,7 +23,7 @@ private:
     bool halted;
     bool zeroFlag;
 
-    void dummy_executeMOV(const std::string& dest, const std::string& src);
+    void executeMOV(const std::string& dest, const std::string& src);
 
     void executeInstruction(const std::string& instruction);
     std::vector<std::string> tokenize(const std::string& str);

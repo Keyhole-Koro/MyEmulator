@@ -20,7 +20,7 @@ void CPU::execute() {
         executeInstruction(instruction);
     }
 }
-void CPU::dummy_executeMOV(const std::string& dest, const std::string& src) {
+void CPU::executeMOV(const std::string& dest, const std::string& src) {
     int destReg = parseRegister(dest);
     int value = parseOperand(src);
     registers[destReg] = value;
@@ -38,7 +38,7 @@ void CPU::executeInstruction(const std::string& instruction) {
     const std::string& opcode = tokens[0];
 
     if (opcode == "MOV") {
-        dummy_executeMOV(tokens[1], tokens[2]);
+        executeMOV(tokens[1], tokens[2]);
     } else if (opcode == "LOAD") {
         int reg = parseRegister(tokens[1]);
         int value = parseOperand(tokens[2]);

@@ -1,15 +1,22 @@
-# Dockerfile
-FROM gcc:13
+# Use a base image
+FROM debian:bookworm
 
-# Install additional tools
-RUN apt-get update && apt-get install -y \
-    make \
-    gdb \
-    git \
+# Install required dependencies
+RUN apt update && apt install -y \
+    build-essential \
     cmake \
+    git \
+    libgtest-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /workspace
+# Clone, build, and install Google Test
+RUN git clone https://github.com/google/googletest.git /tmp/googletest && \
+    cd /tmp/googletest && \
+    cmake -S . -B build && \
+    cmake --build build && \
+    cd build && \
+    make install && \
+    rm -rf /tmp/googletest
 
-# This container is for dev; building/running is done via VS Code tasks
+# Set the working directory
+WORKDIR /workspaces/YourVM
