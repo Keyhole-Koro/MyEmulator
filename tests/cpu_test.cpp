@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include "services/cpu.hpp"
-#include "services/memory.hpp"
+#include "services/ram.hpp"
 #include "runtime/encoder.hpp"
 
 class CPUTest : public ::testing::Test {
