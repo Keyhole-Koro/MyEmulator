@@ -1,10 +1,11 @@
-CXX = g++  
-CXXFLAGS = -std=c++17 -Iinc -Isrc -Wall -Wextra
+CXX = g++
+CXXFLAGS = -std=c++17 -Iinc -Isrc -Wall -Wextra -g
+
 SRC = $(wildcard src/*.cpp) $(wildcard src/**/*.cpp)
 SRC_NO_MAIN = $(filter-out src/main.cpp, $(SRC))
 
 OBJ = $(SRC:.cpp=.o)
-TARGET = YourVM
+TARGET = YourEmulator
 
 TEST_SRC = $(wildcard tests/*.cpp)
 TEST_TARGET = main_test
@@ -19,6 +20,9 @@ $(TARGET): $(OBJ)
 
 run: $(TARGET)
 	./$(TARGET)
+
+gdb: $(TARGET)
+	gdb ./$(TARGET)
 
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)

@@ -1,35 +1,40 @@
-#ifndef CPU_HPP
-#define CPU_HPP
+#pragma once
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
-#include "stack.hpp"
+
+#include "services/memory.hpp"
 
 class CPU {
 public:
-    CPU();
+    explicit CPU(Memory& mem);
 
-    void loadProgram(const std::vector<std::string>& program);
+    void loadProgram(const std::vector<uint16_t>& program, uint16_t startAddress = 0x000);
     void execute();
 
-    int getDataRegister(int index) const;
+    uint16_t getDataRegister(int index) const;
 
 private:
-    std::array<int, 8> registers;
-    std::vector<std::string> memory;
-    Stack stack;
-    int pc;
+    Memory memory;
+
+    std::array<uint16_t, 8> registers;
+    uint16_t stackPointer;
+    uint16_t programCounter;
+    bool carryFlag;
+
     bool halted;
     bool zeroFlag;
 
-    void executeMOV(const std::string& dest, const std::string& src);
+    void mov(const uint16_t& dest, const uint16_t& src);
 
-    void executeInstruction(const std::string& instruction);
-    std::vector<std::string> tokenize(const std::string& str);
-    int parseRegister(const std::string& token);
-    int parseOperand(const std::string& token);
-    void updateZeroFlag(int value);
+    void push(uint16_t value);
+    uint16_t pop();
+    uint16_t top() const;
+    bool isEmpty() const;
+    uint16_t size() const;
+
+    void executeInstruction(const uint16_t& instruction);
+    void updateZeroFlag(uint16_t value);
 };
-
-#endif // CPU_HPP

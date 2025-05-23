@@ -1,160 +1,151 @@
 #include "services/cpu.hpp"
 
 #include <iostream>
-#include <unordered_map>
-#include <vector>
 #include <stdexcept>
-#include <array>
+#include <sstream>
+#include <bitset>
+#include <string>
 
-CPU::CPU() : pc(0), halted(false), zeroFlag(false) {
+#include "runtime/InstructionSet.hpp"
+#include "runtime/decoder.hpp"
+
+constexpr uint16_t PROGRAM_START = 0x0000;
+constexpr uint16_t STACK_BASE = 0x7FFF;
+
+CPU::CPU(Memory& memory)
+    : programCounter(PROGRAM_START), stackPointer(STACK_BASE), halted(false), zeroFlag(false), carryFlag(false) {
+    this->memory = memory;
     registers.fill(0);
 }
 
-void CPU::loadProgram(const std::vector<std::string>& program) {
-    memory = program;
+void CPU::loadProgram(const std::vector<uint16_t>& program, uint16_t startAddress) {
+    for (const auto& instruction : program) {
+        memory.write(startAddress++, instruction);
+    }
 }
 
 void CPU::execute() {
-    while (!halted && pc < static_cast<int>(memory.size())) {
-        const std::string& instruction = memory[pc];
+    while (!halted && programCounter < memory.size()) {
+        const uint16_t& instruction = memory.read(programCounter++);
         executeInstruction(instruction);
     }
 }
-void CPU::executeMOV(const std::string& dest, const std::string& src) {
-    int destReg = parseRegister(dest);
-    int value = parseOperand(src);
-    registers[destReg] = value;
-    updateZeroFlag(registers[destReg]);
+
+uint16_t CPU::getDataRegister(int index) const {
+    if (index < 0 || index >= registers.size()) {
+        throw std::out_of_range("Register index out of range");
+    }
+    return registers[index];
 }
 
-int CPU::getDataRegister(int index) const {
-    if (index >= 0 && index < static_cast<int>(registers.size())) {
-        return registers[index];
+void CPU::push(uint16_t value) {
+    if (stackPointer == 0x0000) {
+        throw std::runtime_error("Stack overflow");
     }
-    throw std::runtime_error("Invalid register index: " + std::to_string(index));
-}
-void CPU::executeInstruction(const std::string& instruction) {
-    auto tokens = tokenize(instruction);
-    const std::string& opcode = tokens[0];
-
-    if (opcode == "MOV") {
-        executeMOV(tokens[1], tokens[2]);
-    } else if (opcode == "LOAD") {
-        int reg = parseRegister(tokens[1]);
-        int value = parseOperand(tokens[2]);
-        registers[reg] = value;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "STORE") {
-        int reg = parseRegister(tokens[1]);
-        int address = parseOperand(tokens[2]);
-        memory[address] = std::to_string(registers[reg]);
-    }
-    else if (opcode == "ADD") {
-        int reg = parseRegister(tokens[1]);
-        int value = parseOperand(tokens[2]);
-        registers[reg] += value;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "SUB") {
-        int reg = parseRegister(tokens[1]);
-        int value = parseOperand(tokens[2]);
-        registers[reg] -= value;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "INC") {
-        int reg = parseRegister(tokens[1]);
-        registers[reg]++;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "DEC") {
-        int reg = parseRegister(tokens[1]);
-        registers[reg]--;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "AND") {
-        int reg = parseRegister(tokens[1]);
-        int value = parseOperand(tokens[2]);
-        registers[reg] &= value;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "OR") {
-        int reg = parseRegister(tokens[1]);
-        int value = parseOperand(tokens[2]);
-        registers[reg] |= value;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "XOR") {
-        int reg = parseRegister(tokens[1]);
-        int value = parseOperand(tokens[2]);
-        registers[reg] ^= value;
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "NOT") {
-        int reg = parseRegister(tokens[1]);
-        registers[reg] = ~registers[reg];
-        updateZeroFlag(registers[reg]);
-    } else if (opcode == "JMP") {
-        printf("Jumping to instruction %s\n", tokens[1].c_str());
-        pc = parseOperand(tokens[1]) - 1;
-    } else if (opcode == "JZ") {
-        printf("Jumping to instruction %s\n", tokens[1].c_str());
-        if (zeroFlag) {
-            pc = parseOperand(tokens[1]) - 1;
-        }
-    } else if (opcode == "JNZ") {
-        if (!zeroFlag) {
-            pc = parseOperand(tokens[1]) - 1;
-        }
-    } else if (opcode == "PUSH") {
-        stack.push(parseOperand(tokens[1]));
-    } else if (opcode == "POP") {
-        if (stack.isEmpty()) {
-            throw std::runtime_error("Stack underflow");
-        }
-        int reg = parseRegister(tokens[1]);
-        registers[reg] = stack.top();
-        stack.pop();
-    } else if (opcode == "NOP") {
-        // Do nothing
-    } else if (opcode == "HALT") {
-        halted = true;
-    } else {
-        throw std::runtime_error("Unknown instruction: " + opcode);
-    }
-
-    pc++;
+    memory.write(stackPointer--, value);
 }
 
-std::vector<std::string> CPU::tokenize(const std::string& str) {
-    std::vector<std::string> tokens;
-    std::string token;
-    for (char c : str) {
-        if (c == ' ' || c == ',') {
-            if (!token.empty()) {
-                tokens.push_back(token);
-                token.clear();
-            }
-        } else {
-            token += c;
-        }
+uint16_t CPU::pop() {
+    if (stackPointer >= memory.size() - 1) {
+        throw std::runtime_error("Stack underflow");
     }
-    if (!token.empty()) {
-        tokens.push_back(token);
-    }
-    return tokens;
+    return memory.read(++stackPointer);
 }
 
-int CPU::parseRegister(const std::string& token) {
-    if (token[0] == 'R' && token.size() == 2 && isdigit(token[1])) {
-        int reg = token[1] - '0';
-        if (reg >= 0 && reg < static_cast<int>(registers.size())) {
-            return reg;
-        }
-    }
-    throw std::runtime_error("Invalid register: " + token);
-}
-
-int CPU::parseOperand(const std::string& token) {
-    if (token[0] == 'R') {
-        return registers[parseRegister(token)];
-    }
-    return std::stoi(token);
-}
-
-// Update the zero flag
-void CPU::updateZeroFlag(int value) {
+void CPU::updateZeroFlag(uint16_t value) {
     zeroFlag = (value == 0);
+}
+
+void CPU::executeInstruction(const uint16_t& instruction) {
+    DecodedInstruction inst = decodeInstruction(instruction);
+
+    switch (inst.opcode) {
+        case MOV:
+            registers[inst.reg1] = registers[inst.reg2];
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case MOVI:
+            registers[inst.reg1] = inst.imm;
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case LD:
+            registers[inst.reg1] = memory.read(registers[inst.reg2]);
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case ST:
+            memory.write(registers[inst.reg1], registers[inst.reg2]);
+            break;
+
+        case ADD:
+            registers[inst.reg1] += registers[inst.reg2];
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case SUB:
+            registers[inst.reg1] -= registers[inst.reg2];
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case CMP:
+            zeroFlag = (registers[inst.reg1] == registers[inst.reg2]);
+            break;
+        case AND:
+            registers[inst.reg1] &= registers[inst.reg2];
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case OR:
+            registers[inst.reg1] |= registers[inst.reg2];
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case XOR:
+            registers[inst.reg1] ^= registers[inst.reg2];
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case SHL:
+            registers[inst.reg1] <<= 1;
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case SHR:
+            registers[inst.reg1] >>= 1;
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+
+        case JMP:
+            programCounter = inst.imm;
+            break;
+        case JZ:
+            if (zeroFlag) programCounter = inst.imm;
+            break;
+        case JNZ:
+            if (!zeroFlag) programCounter = inst.imm;
+            break;
+        case CALL:
+            push(programCounter);
+            programCounter = inst.imm;
+            break;
+        case RET:
+            programCounter = pop();
+            break;
+
+        case PUSH:
+            push(registers[inst.reg1]);
+            break;
+        case POP:
+            registers[inst.reg1] = pop();
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+
+        case IN:
+            registers[inst.reg1] = memory.read(0xC000 + inst.imm);
+            updateZeroFlag(registers[inst.reg1]);
+            break;
+        case OUT:
+            memory.write(0xC000 + inst.imm, registers[inst.reg1]);
+            break;
+
+        case HALT:
+            halted = true;
+            break;
+
+        default:
+            throw std::runtime_error("Unknown opcode: 0x" + std::to_string(static_cast<uint8_t>(inst.opcode)));
+    }
 }

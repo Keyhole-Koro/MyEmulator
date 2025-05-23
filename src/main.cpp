@@ -1,24 +1,44 @@
-#include "services/cpu.hpp"
-
 #include <iostream>
+#include <bitset>
+
+#include "runtime/encoder.hpp"
+#include "runtime/decoder.hpp"
+#include "services/cpu.hpp"
+#include "services/memory.hpp"
+
+constexpr uint16_t MEMORY_SIZE = 0x10000; // 64KB
 
 int main() {
-    CPU cpu;
-    std::vector<std::string> program = {
-        "MOV R0, 5",
-        "MOV R1, 10",
-        "ADD R0, R1",
-        "DEC R0",
-        "JZ 8",
-        "PUSH R0",
-        "POP R2",
+    Memory memory;
+    CPU cpu(memory);
+
+    std::vector<std::string> code = {
+        "MOV R1, R2",
+        "MOVI R3, #42",
+        "ADD R1, R3",
         "HALT"
     };
 
-    cpu.loadProgram(program);
-    cpu.execute();
+    try {
+        auto binary = encodeProgram(code);
 
-    printf("%d\n", cpu.getDataRegister(0));
-    printf("%d\n", cpu.getDataRegister(1));
+
+        for (const auto& instruction : binary) {
+            std::cout << std::bitset<16>(instruction) << std::endl;
+        }
+
+        cpu.loadProgram(binary, 0x0000);
+
+        cpu.execute();
+
+        std::cout << "Register 1: " << cpu.getDataRegister(1) << std::endl;
+        std::cout << "Register 2: " << cpu.getDataRegister(2) << std::endl;
+        std::cout << "Register 3: " << cpu.getDataRegister(3) << std::endl;
+        std::cout << "Register 4: " << cpu.getDataRegister(4) << std::endl;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
+
     return 0;
 }
