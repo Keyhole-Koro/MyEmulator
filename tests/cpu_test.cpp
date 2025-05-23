@@ -5,10 +5,10 @@
 
 class CPUTest : public ::testing::Test {
 protected:
-    Memory memory;
+    RAM ram;
     CPU cpu;
 
-    CPUTest() : cpu(memory) {}
+    CPUTest() : cpu(ram) {}
 
     void loadAndExecute(const std::vector<std::string>& program) {
         auto machineCode = encodeProgram(program);
