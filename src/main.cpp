@@ -5,12 +5,18 @@
 #include "runtime/decoder.hpp"
 #include "services/cpu.hpp"
 #include "services/ram.hpp"
-
-constexpr uint16_t RAM_SIZE = 0x10000; // 64KB
+#include "services/Bus/bus.hpp"
+#include "services/Bus/busController.hpp"
 
 int main() {
+    // Bus system setup
+    Bus bus;
+    BusController controller;
+
     RAM ram;
-    CPU cpu(ram);
+    controller.addDevice(&ram);
+
+    CPU cpu(bus, controller);
 
     std::vector<std::string> code = {
         "MOV R1, R2",
@@ -22,13 +28,11 @@ int main() {
     try {
         auto binary = encodeProgram(code);
 
-
         for (const auto& instruction : binary) {
             std::cout << std::bitset<16>(instruction) << std::endl;
         }
 
         cpu.loadProgram(binary, 0x0000);
-
         cpu.execute();
 
         std::cout << "Register 1: " << cpu.getDataRegister(1) << std::endl;

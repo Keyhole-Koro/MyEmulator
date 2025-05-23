@@ -1,26 +1,27 @@
 #include "services/ram.hpp"
+
 #include <stdexcept>
-#include <iostream>
 
-RAM::RAM() : ram_(65536, 0) {}  // 64K words (128 KB)
-
-uint16_t RAM::read(uint16_t address) const {
-    checkAddress(address);
-    return ram_[address];
+// Check if the given address falls within RAM's addressable range
+bool RAM::inRange(uint16_t address) const {
+    return address >= BASE_ADDR && address < (BASE_ADDR + MEM_SIZE);
 }
 
-void RAM::write(uint16_t address, uint16_t value) {
-    checkAddress(address);
-    ram_[address] = value;
+// Read data from RAM and place it on the bus
+void RAM::read(uint16_t address, Bus& bus) {
+    checkRange(address);
+    bus.data = memory[address - BASE_ADDR];
 }
 
-size_t RAM::size() const noexcept {
-    return ram_.size();
+// Write data from the bus into RAM
+void RAM::write(uint16_t address, Bus& bus) {
+    checkRange(address);
+    memory[address - BASE_ADDR] = bus.data;
 }
 
-
-void RAM::checkAddress(uint16_t address) const {
-    if (address >= ram_.size()) {
-        throw std::out_of_range("RAM address out of range");
+// Internal helper to throw if address is out of RAM's range
+void RAM::checkRange(uint16_t address) const {
+    if (!inRange(address)) {
+        throw std::out_of_range("RAM address out of range: 0x" + std::to_string(address));
     }
 }

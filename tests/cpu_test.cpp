@@ -1,14 +1,20 @@
 #include <gtest/gtest.h>
 #include "services/cpu.hpp"
 #include "services/ram.hpp"
+#include "services/Bus/bus.hpp"
+#include "services/Bus/busController.hpp"
 #include "runtime/encoder.hpp"
 
 class CPUTest : public ::testing::Test {
 protected:
+    Bus bus;
+    BusController controller;
     RAM ram;
     CPU cpu;
 
-    CPUTest() : cpu(ram) {}
+    CPUTest() : ram(), cpu(bus, controller) {
+        controller.addDevice(&ram);
+    }
 
     void loadAndExecute(const std::vector<std::string>& program) {
         auto machineCode = encodeProgram(program);
