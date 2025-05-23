@@ -4,13 +4,13 @@
 #include "runtime/encoder.hpp"
 #include "runtime/decoder.hpp"
 #include "services/cpu.hpp"
-#include "services/memory.hpp"
+#include "services/ram.hpp"
 
-constexpr uint16_t MEMORY_SIZE = 0x10000; // 64KB
+constexpr uint16_t RAM_SIZE = 0x10000; // 64KB
 
 int main() {
-    Memory memory;
-    CPU cpu(memory);
+    RAM ram;
+    CPU cpu(ram);
 
     std::vector<std::string> code = {
         "MOV R1, R2",

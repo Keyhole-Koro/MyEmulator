@@ -1,12 +1,12 @@
-#ifndef MEMORY_HPP
-#define MEMORY_HPP
+#ifndef RAM_HPP
+#define RAM_HPP
 
 #include <cstdint>
 #include <vector>
 
-class Memory {
+class RAM {
 public:
-    Memory();
+RAM();
 
     uint16_t read(uint16_t address) const;
     void write(uint16_t address, uint16_t value);
@@ -14,7 +14,7 @@ public:
     size_t size() const noexcept;
 
 private:
-    std::vector<uint16_t> memory_;
+    std::vector<uint16_t> ram_;
 
     void checkAddress(uint16_t address) const;
 };

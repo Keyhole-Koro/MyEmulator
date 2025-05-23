@@ -12,21 +12,21 @@
 constexpr uint16_t PROGRAM_START = 0x0000;
 constexpr uint16_t STACK_BASE = 0x7FFF;
 
-CPU::CPU(Memory& memory)
+CPU::CPU(RAM& ram)
     : programCounter(PROGRAM_START), stackPointer(STACK_BASE), halted(false), zeroFlag(false), carryFlag(false) {
-    this->memory = memory;
+    this->ram = ram;
     registers.fill(0);
 }
 
 void CPU::loadProgram(const std::vector<uint16_t>& program, uint16_t startAddress) {
     for (const auto& instruction : program) {
-        memory.write(startAddress++, instruction);
+        ram.write(startAddress++, instruction);
     }
 }
 
 void CPU::execute() {
-    while (!halted && programCounter < memory.size()) {
-        const uint16_t& instruction = memory.read(programCounter++);
+    while (!halted && programCounter < ram.size()) {
+        const uint16_t& instruction = ram.read(programCounter++);
         executeInstruction(instruction);
     }
 }
@@ -42,14 +42,14 @@ void CPU::push(uint16_t value) {
     if (stackPointer == 0x0000) {
         throw std::runtime_error("Stack overflow");
     }
-    memory.write(stackPointer--, value);
+    ram.write(stackPointer--, value);
 }
 
 uint16_t CPU::pop() {
-    if (stackPointer >= memory.size() - 1) {
+    if (stackPointer >= ram.size() - 1) {
         throw std::runtime_error("Stack underflow");
     }
-    return memory.read(++stackPointer);
+    return ram.read(++stackPointer);
 }
 
 void CPU::updateZeroFlag(uint16_t value) {
@@ -69,11 +69,11 @@ void CPU::executeInstruction(const uint16_t& instruction) {
             updateZeroFlag(registers[inst.reg1]);
             break;
         case LD:
-            registers[inst.reg1] = memory.read(registers[inst.reg2]);
+            registers[inst.reg1] = ram.read(registers[inst.reg2]);
             updateZeroFlag(registers[inst.reg1]);
             break;
         case ST:
-            memory.write(registers[inst.reg1], registers[inst.reg2]);
+            ram.write(registers[inst.reg1], registers[inst.reg2]);
             break;
 
         case ADD:
@@ -134,11 +134,11 @@ void CPU::executeInstruction(const uint16_t& instruction) {
             break;
 
         case IN:
-            registers[inst.reg1] = memory.read(0xC000 + inst.imm);
+            registers[inst.reg1] = ram.read(0xC000 + inst.imm);
             updateZeroFlag(registers[inst.reg1]);
             break;
         case OUT:
-            memory.write(0xC000 + inst.imm, registers[inst.reg1]);
+            ram.write(0xC000 + inst.imm, registers[inst.reg1]);
             break;
 
         case HALT:

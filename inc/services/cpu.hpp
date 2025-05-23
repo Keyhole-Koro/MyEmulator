@@ -5,11 +5,11 @@
 #include <string>
 #include <vector>
 
-#include "services/memory.hpp"
+#include "services/ram.hpp"
 
 class CPU {
 public:
-    explicit CPU(Memory& mem);
+    explicit CPU(RAM& ram);
 
     void loadProgram(const std::vector<uint16_t>& program, uint16_t startAddress = 0x000);
     void execute();
@@ -17,7 +17,7 @@ public:
     uint16_t getDataRegister(int index) const;
 
 private:
-    Memory memory;
+    RAM ram;
 
     std::array<uint16_t, 8> registers;
     uint16_t stackPointer;
