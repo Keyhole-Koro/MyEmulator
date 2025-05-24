@@ -5,8 +5,8 @@
 #include <array>
 #include <cstddef>
 
-#include "services/bus/busDevice.hpp"
-#include "services/bus/bus.hpp" // Assuming Bus is defined here
+#include "bus/busDevice.hpp"
+#include "bus/bus.hpp"
 
 class RAM : public BusDevice {
     static constexpr size_t MEM_SIZE = 0x8000; // 32KB

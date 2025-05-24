@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
-#include "services/cpu.hpp"
-#include "services/ram.hpp"
-#include "services/Bus/bus.hpp"
-#include "services/Bus/busController.hpp"
+#include "cpu/cpu.hpp"
+#include "ram/ram.hpp"
+#include "bus/bus.hpp"
+#include "bus/busController.hpp"
 #include "runtime/encoder.hpp"
 
 class CPUTest : public ::testing::Test {

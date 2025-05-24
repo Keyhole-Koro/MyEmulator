@@ -2,11 +2,11 @@
 #include <bitset>
 
 #include "runtime/encoder.hpp"
-#include "runtime/decoder.hpp"
-#include "services/cpu.hpp"
-#include "services/ram.hpp"
-#include "services/Bus/bus.hpp"
-#include "services/Bus/busController.hpp"
+#include "cpu/decoder.hpp"
+#include "cpu/cpu.hpp"
+#include "ram/ram.hpp"
+#include "bus/bus.hpp"
+#include "bus/busController.hpp"
 
 int main() {
     // Bus system setup

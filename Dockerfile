@@ -19,4 +19,4 @@ RUN git clone https://github.com/google/googletest.git /tmp/googletest && \
     rm -rf /tmp/googletest
 
 # Set the working directory
-WORKDIR /workspaces/YourVM
+WORKDIR /workspaces/YourEmulator

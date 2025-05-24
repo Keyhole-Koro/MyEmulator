@@ -1,5 +1,5 @@
 #pragma once
-#include "services/bus/bus.hpp"
+#include "bus/bus.hpp"
 
 class BusDevice {
 public:

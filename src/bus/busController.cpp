@@ -1,4 +1,4 @@
-#include "services/bus/busController.hpp"
+#include "bus/busController.hpp"
 
 void BusController::addDevice(BusDevice* dev) {
     devices.push_back(dev);

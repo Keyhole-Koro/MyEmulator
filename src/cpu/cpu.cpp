@@ -1,4 +1,4 @@
-#include "services/cpu.hpp"
+#include "cpu/cpu.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -7,7 +7,7 @@
 #include <string>
 
 #include "runtime/InstructionSet.hpp"
-#include "runtime/decoder.hpp"
+#include "cpu/decoder.hpp"
 
 CPU::CPU(Bus& bus, BusController& controller)
     : bus(bus), controller(controller),

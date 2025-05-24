@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-#include "services/Bus/bus.hpp"
-#include "services/Bus/busController.hpp"
+#include "bus/bus.hpp"
+#include "bus/busController.hpp"
 
 class CPU {
 public:

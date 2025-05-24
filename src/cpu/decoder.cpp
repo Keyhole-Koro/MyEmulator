@@ -1,8 +1,6 @@
-#include "runtime/decoder.hpp"
+#include "cpu/decoder.hpp"
 
 #include "runtime/InstructionSet.hpp"
-
-#include "runtime/decoder.hpp"
 
 DecodedInstruction decodeInstruction(const uint16_t machineCode) {
     DecodedInstruction inst;
