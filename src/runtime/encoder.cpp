@@ -1,137 +1,73 @@
 #include "runtime/encoder.hpp"
-
-#include <iostream>
-#include <unordered_map>
 #include <sstream>
+#include <unordered_map>
 #include <stdexcept>
-#include <vector>
+#include <iostream>
 
-enum OperandType {
-    NONE,
-    REG,
-    IMM8,
-    IMM11,
-    REG_REG,
-    REG_IMM8
+// Opcode mapping based on the architecture specification
+const std::unordered_map<std::string, uint8_t> opcodeMap = {
+    {"MOV", 0x00}, {"MOVI", 0x01}, {"LD", 0x02}, {"ST", 0x03},
+    {"ADD", 0x04}, {"SUB", 0x05}, {"CMP", 0x06}, {"AND", 0x07},
+    {"OR", 0x08},  {"XOR", 0x09}, {"SHL", 0x0A}, {"SHR", 0x0B},
+    {"JMP", 0x0C}, {"JZ", 0x0D},  {"JNZ", 0x0E}, {"CALL", 0x0F},
+    {"RET", 0x10}, {"PUSH", 0x11}, {"POP", 0x12}, {"IN", 0x13},
+    {"OUT", 0x14}, {"HALT", 0x3F}
 };
 
-// Define bit layout
-constexpr int OPCODE_SHIFT = 11;
-constexpr int REG1_SHIFT = 8;
-constexpr int REG2_SHIFT = 5;
-
-struct InstructionFormat {
-    uint8_t opcode;
-    OperandType format;
-};
-
-std::unordered_map<std::string, InstructionFormat> instructionSet = {
-    // 📥 Data Movement
-    {"MOV",  {0x01, REG_REG}},
-    {"MOVI", {0x02, REG_IMM8}},
-    {"LD",   {0x03, REG_REG}},
-    {"ST",   {0x04, REG_REG}},
-
-    // ➕ Arithmetic/Logic
-    {"ADD",  {0x05, REG_REG}},
-    {"SUB",  {0x06, REG_REG}},
-    {"CMP",  {0x07, REG_REG}},
-    {"AND",  {0x08, REG_REG}},
-    {"OR",   {0x09, REG_REG}},
-    {"XOR",  {0x0A, REG_REG}},
-    {"SHL",  {0x0B, REG}},
-    {"SHR",  {0x0C, REG}},
-
-    // 🔁 Control Flow
-    {"JMP",  {0x0D, IMM11}},
-    {"JZ",   {0x0E, IMM11}},
-    {"JNZ",  {0x0F, IMM11}},
-    {"CALL", {0x10, IMM11}},
-    {"RET",  {0x11, NONE}},
-
-    // 📦 Stack
-    {"PUSH", {0x12, REG}},
-    {"POP",  {0x13, REG}},
-
-    // 🌐 I/O
-    {"IN",   {0x14, REG_IMM8}},
-    {"OUT",  {0x15, REG_IMM8}},
-
-    // Special
-    {"HALT", {0x1F, NONE}}
-};
-
-uint16_t encodeRegister(const std::string& reg) {
-    if (reg[0] != 'R') throw std::runtime_error("Expected register format (e.g., R1): " + reg);
-    int regNum = std::stoi(reg.substr(1));
-    if (regNum < 0 || regNum > 7) throw std::runtime_error("Invalid register number: " + reg);
-    return static_cast<uint16_t>(regNum);
-}
-
-uint16_t encodeImmediate(const std::string& immStr, int bits) {
-    if (immStr[0] != '#') throw std::runtime_error("Expected immediate format (e.g., #42): " + immStr);
-    int value = std::stoi(immStr.substr(1));
-    int maxVal = (1 << bits) - 1;
-    if (value < 0 || value > maxVal) throw std::runtime_error("Immediate value out of range: " + immStr);
-    return static_cast<uint16_t>(value);
-}
-
-std::vector<uint16_t> encodeProgram(const std::vector<std::string>& program) {
-    std::vector<uint16_t> machineCode;
+std::vector<uint32_t> encodeProgram(const std::vector<std::string>& program) {
+    std::vector<uint32_t> encodedProgram;
 
     for (const auto& line : program) {
         std::istringstream iss(line);
-        std::vector<std::string> tokens;
-        std::string token;
+        std::string mnemonic;
+        iss >> mnemonic;
 
-        while (iss >> token) {
-            if (!token.empty() && token.back() == ',') token.pop_back();
-            tokens.push_back(token);
+        if (opcodeMap.find(mnemonic) == opcodeMap.end()) {
+            throw std::invalid_argument("Unknown instruction: " + mnemonic);
         }
 
-        if (tokens.empty()) continue;
+        uint8_t opcode = opcodeMap.at(mnemonic);
+        uint32_t instruction = opcode << 26; // Shift opcode to the top 6 bits
 
-        const std::string& mnemonic = tokens[0];
-        auto it = instructionSet.find(mnemonic);
-        if (it == instructionSet.end()) throw std::runtime_error("Unknown instruction: " + mnemonic);
-
-        const auto& [opcode, format] = it->second;
-        uint16_t encoded = (opcode << OPCODE_SHIFT);
-
-
-        switch (format) {
-            case NONE:
-                if (tokens.size() != 1) throw std::runtime_error("No operands expected for: " + mnemonic);
-                break;
-
-            case REG:
-                if (tokens.size() != 2) throw std::runtime_error("Expected 1 register for: " + mnemonic);
-                encoded |= (encodeRegister(tokens[1]) << REG1_SHIFT);
-                break;
-
-            case IMM11:
-                if (tokens.size() != 2) throw std::runtime_error("Expected 1 immediate (11-bit) for: " + mnemonic);
-                encoded |= encodeImmediate(tokens[1], 11);
-                break;
-
-            case REG_REG:
-                if (tokens.size() != 3) throw std::runtime_error("Expected 2 registers for: " + mnemonic);
-                encoded |= (encodeRegister(tokens[1]) << REG1_SHIFT);
-                encoded |= (encodeRegister(tokens[2]) << REG2_SHIFT);
-                break;
-
-            case REG_IMM8:
-                if (tokens.size() != 3) throw std::runtime_error("Expected reg, imm8 for: " + mnemonic);
-                encoded |= (encodeRegister(tokens[1]) << REG1_SHIFT);
-                encoded |= encodeImmediate(tokens[2], 8);
-                break;
-
-            default:
-                throw std::runtime_error("Unknown operand format for: " + mnemonic);
+        if (mnemonic == "RET" || mnemonic == "HALT") {
+            // No operands
+            encodedProgram.push_back(instruction);
+            continue;
         }
 
-        machineCode.push_back(encoded);
+        std::string operand1, operand2;
+        iss >> operand1;
+        std::cout << "Single register operand: " << operand1.substr(1) << std::endl;
+
+        if (mnemonic == "JMP" || mnemonic == "JZ" || mnemonic == "JNZ" || mnemonic == "CALL") {
+            // Control flow instructions with 26-bit immediate
+            uint32_t imm = std::stoul(operand1, nullptr, 0) & 0x03FFFFFF;
+            instruction |= imm;
+        } else if (mnemonic == "PUSH" || mnemonic == "POP" || mnemonic == "SHL" || mnemonic == "SHR") {
+            // Single register operand
+            uint8_t reg = std::stoi(operand1.substr(1)) & 0x1F;
+            instruction |= (reg << 21);
+        } else {
+            // General instructions with two operands
+            iss >> operand2;
+            uint8_t reg1 = std::stoi(operand1.substr(1)) & 0x1F;
+            instruction |= (reg1 << 21);
+
+            if (operand2[0] == 'R') {
+                // Register operand
+                std::cout << "Second register operand: " << operand2.substr(1) << std::endl;
+                uint8_t reg2 = std::stoi(operand2.substr(1)) & 0x1F;
+                instruction |= (reg2 << 16);
+            } else {
+                // Immediate operand
+                std::cout << "Immediate operand: " << operand2 << std::endl;
+                uint16_t imm = std::stoul(operand2.substr(1), nullptr, 0) & 0xFFFF;
+                instruction |= imm;
+            }
+        }
+
+        encodedProgram.push_back(instruction);
     }
 
-    return machineCode;
+    return encodedProgram;
 }

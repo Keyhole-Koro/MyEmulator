@@ -3,14 +3,16 @@
 
 #include <cstdint>
 
+#include "runtime/rules.hpp"
+
 struct DecodedInstruction {
-    uint16_t raw;
-    uint8_t opcode;
-    uint8_t reg1;
-    uint8_t reg2;
-    uint16_t imm;
+    uint32_t raw;
+    _6bits opcode;
+    _5bits reg1;
+    _5bits reg2;
+    _16to26bits imm;
 };
 
-DecodedInstruction decodeInstruction(const uint16_t machineCode);
+DecodedInstruction decodeInstruction(const uint32_t machineCode);
 
 #endif // DECODER_HPP

@@ -4,7 +4,7 @@
 class BusDevice {
 public:
     virtual ~BusDevice() = default;
-    virtual bool inRange(uint16_t address) const = 0;
-    virtual void read(uint16_t address, Bus& bus) = 0;
-    virtual void write(uint16_t address, Bus& bus) = 0;
+    virtual bool inRange(uint32_t address) const = 0;
+    virtual void read(uint32_t address, Bus& bus) = 0;
+    virtual void write(uint32_t address, Bus& bus) = 0;
 };

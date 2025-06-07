@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include "runtime/rules.hpp"
 
-enum Instruction : uint8_t {
+enum Instruction : _6bits {
     // 📥 Data Movement
     MOV   = 0x01,
     MOVI  = 0x02,

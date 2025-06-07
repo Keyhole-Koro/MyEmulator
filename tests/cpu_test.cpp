@@ -18,7 +18,7 @@ protected:
 
     void loadAndExecute(const std::vector<std::string>& program) {
         auto machineCode = encodeProgram(program);
-        cpu.loadProgram(machineCode, 0x0000);
+        cpu.loadProgram(machineCode, 0x00000000);
         cpu.execute();
     }
 };

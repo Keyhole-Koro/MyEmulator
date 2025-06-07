@@ -21,6 +21,6 @@ void BusController::tick(Bus& bus) {
     }
     // No device found for address
     if (bus.read) {
-        bus.data = 0xFFFF; // Or some default/error value
+        bus.data = 0xFFFFFFFF; // Or some default/error value
     }
 }

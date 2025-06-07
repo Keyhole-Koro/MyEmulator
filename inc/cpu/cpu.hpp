@@ -12,37 +12,37 @@ class CPU {
 public:
     explicit CPU(Bus& bus, BusController& controller);
 
-    void loadProgram(const std::vector<uint16_t>& program, uint16_t startAddress = 0x000);
+    void loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress = 0x00000000);
     void execute();
 
-    uint16_t getDataRegister(int index) const;
+    uint32_t getDataRegister(int index) const;
 
 private:
-    uint16_t PROGRAM_START = 0x0000;
-    uint16_t STACK_BASE = 0x7FFF;
+    uint32_t PROGRAM_START = 0x00000000;
+    uint32_t STACK_BASE = 0x7FFFFFFF;
 
     Bus& bus;
     BusController& controller;
 
-    std::array<uint16_t, 8> registers;
-    uint16_t stackPointer;
-    uint16_t programCounter;
+    std::array<uint32_t, 8> registers;
+    uint32_t stackPointer;
+    uint32_t programCounter;
     bool carryFlag;
 
     bool halted;
     bool zeroFlag;
 
-    void mov(const uint16_t& dest, const uint16_t& src);
-    void push(uint16_t value);
-    uint16_t pop();
-    uint16_t top() const;
+    void mov(const uint32_t& dest, const uint32_t& src);
+    void push(uint32_t value);
+    uint32_t pop();
+    uint32_t top() const;
 
     bool isEmpty() const;
-    uint16_t size() const;
+    uint32_t size() const;
 
-    void executeInstruction(const uint16_t& instruction);
-    void updateZeroFlag(uint16_t value);
+    void executeInstruction(const uint32_t& instruction);
+    void updateZeroFlag(uint32_t value);
 
-    void busWrite(uint16_t address, uint16_t value);
-    uint16_t busRead(uint16_t address);
+    void busWrite(uint32_t address, uint32_t value);
+    uint32_t busRead(uint32_t address);
 };

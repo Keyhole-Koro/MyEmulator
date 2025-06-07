@@ -3,9 +3,9 @@
 
 #include <cstdint>
 
-using opcode_6bits = uint8_t;
-using operand1_3bits = uint8_t;
-using operand1_10bits = uint16_t;
-using operand2_7bits = uint8_t;
+using _6bits = uint8_t;
+using _5bits = uint8_t;
+using _5bits = uint8_t;
+using _16to26bits = uint32_t;
 
 #endif // RULES_HPP

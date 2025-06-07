@@ -6,21 +6,21 @@ SRC_NO_MAIN = $(filter-out src/main.cpp, $(SRC))
 
 BUILD_DIR = build
 OBJ = $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(SRC))
-TARGET = $(BUILD_DIR)/YourEmulator
+TARGET = $(BUILD_DIR)/MyEmulator
 
 TEST_SRC = $(wildcard tests/*.cpp)
 TEST_OBJ = $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(TEST_SRC))
 TEST_TARGET = $(BUILD_DIR)/main_test
 
-# Explicitly link Google Test libraries from /usr/local/lib
+STATIC_LIB = $(BUILD_DIR)/libMyEmulator.a
+
 GTEST_LIBS = -pthread /usr/local/lib/libgtest.a /usr/local/lib/libgtest_main.a
 
 all: $(TARGET)
 
-# Create the build directory structure dynamically
 $(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR)
 	mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -o $@ 
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -28,11 +28,14 @@ $(BUILD_DIR):
 $(TARGET): $(OBJ) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
+$(STATIC_LIB): $(filter-out $(BUILD_DIR)/src/main.o, $(OBJ)) | $(BUILD_DIR)
+	ar rcs $@ $^
+
 run: $(TARGET)
-	./$(TARGET)
+	./$(TARGET) $(ARGS)
 
 gdb: $(TARGET)
-	gdb ./$(TARGET)
+	gdb --args ./$(TARGET) $(ARGS)
 
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)

@@ -9,6 +9,8 @@
 #include "runtime/InstructionSet.hpp"
 #include "cpu/decoder.hpp"
 
+using namespace std;
+
 CPU::CPU(Bus& bus, BusController& controller)
     : bus(bus), controller(controller),
       programCounter(PROGRAM_START),
@@ -19,7 +21,7 @@ CPU::CPU(Bus& bus, BusController& controller)
     registers.fill(0);
 }
 
-void CPU::busWrite(uint16_t address, uint16_t value) {
+void CPU::busWrite(uint32_t address, uint32_t value) {
     bus.address = address;
     bus.data = value;
     bus.write = true;
@@ -28,7 +30,7 @@ void CPU::busWrite(uint16_t address, uint16_t value) {
     bus.write = false;     // Reset
 }
 
-uint16_t CPU::busRead(uint16_t address) {
+uint32_t CPU::busRead(uint32_t address) {
     bus.address = address;
     bus.read = true;
     bus.write = false;
@@ -37,7 +39,7 @@ uint16_t CPU::busRead(uint16_t address) {
     return bus.data;
 }
 
-void CPU::loadProgram(const std::vector<uint16_t>& program, uint16_t startAddress) {
+void CPU::loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress) {
     for (const auto& instruction : program) {
         busWrite(startAddress++, instruction);
     }
@@ -45,38 +47,38 @@ void CPU::loadProgram(const std::vector<uint16_t>& program, uint16_t startAddres
 
 void CPU::execute() {
     while (!halted) {
-        uint16_t instruction = busRead(programCounter++);
+        uint32_t instruction = busRead(programCounter++);
         executeInstruction(instruction);
     }
 }
 
-uint16_t CPU::getDataRegister(int index) const {
+uint32_t CPU::getDataRegister(int index) const {
     if (index < 0 || index >= registers.size()) {
         throw std::out_of_range("Register index out of range");
     }
     return registers[index];
 }
 
-void CPU::push(uint16_t value) {
-    if (stackPointer == 0x0000) {
+void CPU::push(uint32_t value) {
+    if (stackPointer == 0x00000000) {
         throw std::runtime_error("Stack overflow");
     }
     busWrite(stackPointer--, value);
 }
 
-uint16_t CPU::pop() {
-    if (stackPointer >= 0xFFFF) {
+uint32_t CPU::pop() {
+    if (stackPointer >= 0xFFFFFFFF) {
         throw std::runtime_error("Stack underflow");
     }
     return busRead(++stackPointer);
 }
 
-void CPU::updateZeroFlag(uint16_t value) {
+void CPU::updateZeroFlag(uint32_t value) {
     zeroFlag = (value == 0);
 }
 
 
-void CPU::executeInstruction(const uint16_t& instruction) {
+void CPU::executeInstruction(const uint32_t& instruction) {
     DecodedInstruction inst = decodeInstruction(instruction);
 
     switch (inst.opcode) {
@@ -139,7 +141,7 @@ void CPU::executeInstruction(const uint16_t& instruction) {
             break;
 
         case JMP:
-            programCounter = inst.imm;
+            //programCounter = inst.imm;
             break;
 
         case JZ:
@@ -152,11 +154,11 @@ void CPU::executeInstruction(const uint16_t& instruction) {
 
         case CALL:
             push(programCounter);
-            programCounter = inst.imm;
+            //programCounter = inst.imm;
             break;
 
         case RET:
-            programCounter = pop();
+            //programCounter = pop();
             break;
 
         case PUSH:
@@ -169,12 +171,12 @@ void CPU::executeInstruction(const uint16_t& instruction) {
             break;
 
         case IN:
-            registers[inst.reg1] = busRead(0xC000 + inst.imm); // I/O mapped to high addresses
+            registers[inst.reg1] = busRead(0x24000000 + inst.imm); // I/O mapped to high addresses
             updateZeroFlag(registers[inst.reg1]);
             break;
 
         case OUT:
-            busWrite(0xC000 + inst.imm, registers[inst.reg1]);
+            busWrite(0x24000000 + inst.imm, registers[inst.reg1]);
             break;
 
         case HALT:

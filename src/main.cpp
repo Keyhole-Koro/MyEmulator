@@ -1,47 +1,76 @@
 #include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <stdexcept>
 #include <bitset>
 
-#include "runtime/encoder.hpp"
-#include "cpu/decoder.hpp"
 #include "cpu/cpu.hpp"
 #include "ram/ram.hpp"
 #include "bus/bus.hpp"
 #include "bus/busController.hpp"
 
-int main() {
-    // Bus system setup
-    Bus bus;
-    BusController controller;
+std::vector<uint32_t> readBinaryFile(const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Unable to open binary file: " + filename);
+    }
 
-    RAM ram;
-    controller.addDevice(&ram);
+    std::vector<uint32_t> data;
+    uint32_t instruction;
+    while (file.read(reinterpret_cast<char*>(&instruction), sizeof(uint32_t))) {
+        data.push_back(instruction);
+    }
 
-    CPU cpu(bus, controller);
+    return data;
+}
 
-    std::vector<std::string> code = {
-        "MOV R1, R2",
-        "MOVI R3, #42",
-        "ADD R1, R3",
-        "HALT"
-    };
-
+int main(int argc, char* argv[]) {
     try {
-        auto binary = encodeProgram(code);
+        bool testMode = false;
+        std::string filename;
 
-        for (const auto& instruction : binary) {
-            std::cout << std::bitset<16>(instruction) << std::endl;
+        for (int i = 1; i < argc; ++i) {
+            std::string arg = argv[i];
+
+            if (arg == "-t") {
+                if (i + 1 < argc) {
+                    filename = argv[++i];
+                    testMode = true;
+                } else {
+                    std::cerr << "Error: -t requires a filename argument" << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cerr << "Unknown option: " << arg << std::endl;
+                return 1;
+            }
         }
 
-        cpu.loadProgram(binary, 0x0000);
+        if (!testMode || filename.empty()) {
+            std::cerr << "Usage: myemulator -t <binary_file>" << std::endl;
+            return 1;
+        }
+
+        std::cout << "Test mode: loading binary from " << filename << std::endl;
+        std::vector<uint32_t> binary = readBinaryFile(filename);
+
+        Bus bus;
+        BusController controller;
+        RAM ram;
+        controller.addDevice(&ram);
+        CPU cpu(bus, controller);
+
+        cpu.loadProgram(binary, 0x00000000);
         cpu.execute();
 
-        std::cout << "Register 1: " << cpu.getDataRegister(1) << std::endl;
-        std::cout << "Register 2: " << cpu.getDataRegister(2) << std::endl;
-        std::cout << "Register 3: " << cpu.getDataRegister(3) << std::endl;
-        std::cout << "Register 4: " << cpu.getDataRegister(4) << std::endl;
-        
+        for (int i = 1; i <= 4; ++i) {
+            std::cout << "R" << i << ": " << cpu.getDataRegister(i) << std::endl;
+        }
+
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
     }
 
     return 0;

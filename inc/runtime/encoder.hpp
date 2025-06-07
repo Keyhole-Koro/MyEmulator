@@ -5,6 +5,6 @@
 #include <string>
 #include <cstdint>
 
-std::vector<uint16_t> encodeProgram(const std::vector<std::string>& program);
+std::vector<uint32_t> encodeProgram(const std::vector<std::string>& program);
 
 #endif // ENCODER_HPP
