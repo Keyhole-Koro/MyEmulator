@@ -41,6 +41,7 @@ uint32_t CPU::busRead(uint32_t address) {
 
 void CPU::loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress) {
     for (const auto& instruction : program) {
+        cout << "Loading instruction: 0x" << std::hex << instruction << " at address: 0x" << startAddress << std::dec << std::endl;
         busWrite(startAddress++, instruction);
     }
 }
@@ -48,6 +49,9 @@ void CPU::loadProgram(const std::vector<uint32_t>& program, uint32_t startAddres
 void CPU::execute() {
     while (!halted) {
         uint32_t instruction = busRead(programCounter++);
+        printf("------------------------------\n");
+        printf("PC: 0x%08X, Instruction: 0x%08X\n", programCounter - 1, instruction);
+        printf("if halted: %s\n", halted ? "true" : "false");
         executeInstruction(instruction);
     }
 }
@@ -77,10 +81,13 @@ void CPU::updateZeroFlag(uint32_t value) {
     zeroFlag = (value == 0);
 }
 
-
 void CPU::executeInstruction(const uint32_t& instruction) {
     DecodedInstruction inst = decodeInstruction(instruction);
 
+    std::cout << "Executing instruction: "
+              << std::bitset<32>(inst.raw) << " (Opcode: 0x" 
+              << std::hex << static_cast<int>(inst.opcode) << ")" << std::endl;
+              
     switch (inst.opcode) {
         case MOV:
             registers[inst.reg1] = registers[inst.reg2];
@@ -141,24 +148,15 @@ void CPU::executeInstruction(const uint32_t& instruction) {
             break;
 
         case JMP:
-            //programCounter = inst.imm;
+            programCounter += inst.imm - 1; // -1 since pc has already incremented in execute()
             break;
 
         case JZ:
-            if (zeroFlag) programCounter = inst.imm;
+            if (zeroFlag) programCounter += inst.imm - 1; // -1 since pc has already incremented in execute()
             break;
 
         case JNZ:
-            if (!zeroFlag) programCounter = inst.imm;
-            break;
-
-        case CALL:
-            push(programCounter);
-            //programCounter = inst.imm;
-            break;
-
-        case RET:
-            //programCounter = pop();
+            if (!zeroFlag) programCounter += inst.imm - 1; // -1 since pc has already incremented in execute()
             break;
 
         case PUSH:
@@ -184,6 +182,8 @@ void CPU::executeInstruction(const uint32_t& instruction) {
             break;
 
         default:
-            throw std::runtime_error("Unknown opcode: 0x" + std::to_string(static_cast<uint8_t>(inst.opcode)));
-    }
+            std::ostringstream oss;
+            oss << "Unknown opcode: 0x" << std::hex << static_cast<int>(inst.opcode);
+            throw std::runtime_error(oss.str());
+        }
 }

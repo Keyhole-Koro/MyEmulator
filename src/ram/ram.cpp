@@ -5,6 +5,8 @@
 using namespace std;
 
 RAM::RAM() : memory(MEM_SIZE, 0) {
+    // very slow; improve later
+    // reference for optimize https://deepwiki.com/search/how-qemu-allocate-ram-you-know_f4903a9d-ce80-4f26-8d93-5577ad02ee40
     memory = std::vector<uint32_t>(MEM_SIZE, 0);
 }
 

@@ -29,6 +29,8 @@ private:
     uint32_t programCounter;
     bool carryFlag;
 
+    uint32_t basePointer;
+
     bool halted;
     bool zeroFlag;
 

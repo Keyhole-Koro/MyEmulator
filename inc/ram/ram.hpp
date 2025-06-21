@@ -9,7 +9,8 @@
 #include "bus/bus.hpp"
 
 class RAM : public BusDevice {
-    static constexpr size_t MEM_SIZE = 0x20000000; // 512MB (max addressable memory for 32-bit architecture)
+    static constexpr size_t MEM_SIZE = 0x2000;// temporary size for testing (8KB)
+    //static constexpr size_t MEM_SIZE = 0x20000000; // 512MB (max addressable memory for 32-bit architecture)
     static constexpr uint32_t BASE_ADDR = 0x00000000;
 
 public:
