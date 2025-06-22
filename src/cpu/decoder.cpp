@@ -13,9 +13,6 @@ DecodedInstruction decodeInstruction(const uint32_t machineCode) {
         case JMP:
         case JZ:
         case JNZ:
-        case CALL:
-            inst.imm = machineCode & 0x03FFFFFF; // 26-bit immediate
-            break;
         case MOVI:
         case IN:
         case OUT:

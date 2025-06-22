@@ -10,6 +10,8 @@
 #include "bus/bus.hpp"
 #include "bus/busController.hpp"
 
+#include "runtime/debugger/stackDebug.hpp"
+
 std::vector<uint32_t> readBinaryFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
@@ -64,7 +66,9 @@ int main(int argc, char* argv[]) {
         cpu.loadProgram(binary, 0x00000000);
         cpu.execute();
 
-        for (int i = 1; i <= 4; ++i) {
+        displayStack(cpu);
+
+        for (int i = 0; i <= 7; ++i) {
             std::cout << "R" << i << ": " << cpu.getDataRegister(i) << std::endl;
         }
 

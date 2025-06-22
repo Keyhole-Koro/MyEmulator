@@ -8,6 +8,7 @@
 
 #include "runtime/InstructionSet.hpp"
 #include "cpu/decoder.hpp"
+#include "runtime/debugger/decoderDebug.hpp"
 
 using namespace std;
 
@@ -30,7 +31,7 @@ void CPU::busWrite(uint32_t address, uint32_t value) {
     bus.write = false;     // Reset
 }
 
-uint32_t CPU::busRead(uint32_t address) {
+uint32_t CPU::busRead(uint32_t address) const {
     bus.address = address;
     bus.read = true;
     bus.write = false;
@@ -51,7 +52,6 @@ void CPU::execute() {
         uint32_t instruction = busRead(programCounter++);
         printf("------------------------------\n");
         printf("PC: 0x%08X, Instruction: 0x%08X\n", programCounter - 1, instruction);
-        printf("if halted: %s\n", halted ? "true" : "false");
         executeInstruction(instruction);
     }
 }
@@ -68,6 +68,8 @@ void CPU::push(uint32_t value) {
         throw std::runtime_error("Stack overflow");
     }
     busWrite(stackPointer--, value);
+    cout << "read " << busRead(stackPointer + 1) << " from stack at address: 0x" 
+         << std::hex << (stackPointer + 1) << std::dec << std::endl;
 }
 
 uint32_t CPU::pop() {
@@ -75,6 +77,28 @@ uint32_t CPU::pop() {
         throw std::runtime_error("Stack underflow");
     }
     return busRead(++stackPointer);
+}
+
+uint32_t *CPU::getRegisterPtr(uint32_t reg) {
+    switch (reg) {
+        case 0x00: return &registers[0];
+        case 0x01: return &registers[1];
+        case 0x02: return &registers[2];
+        case 0x03: return &registers[3];
+        case 0x04: return &registers[4];
+        case 0x05: return &registers[5];
+        case 0x06: return &registers[6];
+        case 0x07: return &registers[7];
+        case 0x08: return &programCounter;
+        case 0x09: return &stackPointer;
+        case 0x0A: return &basePointer;
+        case 0x0B: return &statusRegister;
+        case 0x0C: return &instructionRegister;
+        default:
+            std::cerr << "Error: Invalid register index " << reg << std::endl;
+            throw std::out_of_range("Register index out of range");
+            exit(1);
+    }
 }
 
 void CPU::updateZeroFlag(uint32_t value) {
@@ -87,64 +111,67 @@ void CPU::executeInstruction(const uint32_t& instruction) {
     std::cout << "Executing instruction: "
               << std::bitset<32>(inst.raw) << " (Opcode: 0x" 
               << std::hex << static_cast<int>(inst.opcode) << ")" << std::endl;
+
+    displayDecodedInstruction(inst);
               
     switch (inst.opcode) {
         case MOV:
-            registers[inst.reg1] = registers[inst.reg2];
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) = *getRegisterPtr(inst.reg2);
+            printf("MOV R%d, R%d\n", inst.reg1, inst.reg2); 
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case MOVI:
-            registers[inst.reg1] = inst.imm;
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) = inst.imm;
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case LD:
-            registers[inst.reg1] = busRead(registers[inst.reg2]);
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) = busRead(*getRegisterPtr(inst.reg2));
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case ST:
-            busWrite(registers[inst.reg1], registers[inst.reg2]);
+            busWrite(*getRegisterPtr(inst.reg1), *getRegisterPtr(inst.reg2));
             break;
 
         case ADD:
-            registers[inst.reg1] += registers[inst.reg2];
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) += *getRegisterPtr(inst.reg2);
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case SUB:
-            registers[inst.reg1] -= registers[inst.reg2];
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) -= *getRegisterPtr(inst.reg2);
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case CMP:
-            zeroFlag = (registers[inst.reg1] == registers[inst.reg2]);
+            zeroFlag = (*getRegisterPtr(inst.reg1) == *getRegisterPtr(inst.reg2));
             break;
 
         case AND:
-            registers[inst.reg1] &= registers[inst.reg2];
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) &= *getRegisterPtr(inst.reg2);
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case OR:
-            registers[inst.reg1] |= registers[inst.reg2];
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) |= *getRegisterPtr(inst.reg2);
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case XOR:
-            registers[inst.reg1] ^= registers[inst.reg2];
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) ^= *getRegisterPtr(inst.reg2);
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case SHL:
-            registers[inst.reg1] <<= 1;
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) <<= 1;
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case SHR:
-            registers[inst.reg1] >>= 1;
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) >>= 1;
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case JMP:
@@ -160,21 +187,21 @@ void CPU::executeInstruction(const uint32_t& instruction) {
             break;
 
         case PUSH:
-            push(registers[inst.reg1]);
+            push(*getRegisterPtr(inst.reg1));
             break;
 
         case POP:
-            registers[inst.reg1] = pop();
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) = pop();
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case IN:
-            registers[inst.reg1] = busRead(0x24000000 + inst.imm); // I/O mapped to high addresses
-            updateZeroFlag(registers[inst.reg1]);
+            *getRegisterPtr(inst.reg1) = busRead(0x24000000 + inst.imm); // I/O mapped to high addresses
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
         case OUT:
-            busWrite(0x24000000 + inst.imm, registers[inst.reg1]);
+            busWrite(0x24000000 + inst.imm, *getRegisterPtr(inst.reg1));
             break;
 
         case HALT:

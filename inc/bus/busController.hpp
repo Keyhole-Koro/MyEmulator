@@ -1,9 +1,10 @@
 #pragma once
 
+#include <vector>
+#include <cstdio>
+
 #include "bus/bus.hpp"
 #include "bus/busDevice.hpp"
-
-#include <vector>
 
 class BusController {
     std::vector<BusDevice*> devices;

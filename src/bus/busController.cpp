@@ -9,6 +9,8 @@ void BusController::tick(Bus& bus) {
     for (auto* dev : devices) {
         if (dev->inRange(bus.address)) {
             if (bus.write) {
+                printf("Writing to device at address 0x%08X\n", bus.address);
+                printf("Data: 0x%08X\n", bus.data);
                 dev->write(bus.address, bus);
                 return;
             }

@@ -17,6 +17,11 @@ public:
 
     uint32_t getDataRegister(int index) const;
 
+    uint32_t getStackPointer() const { return stackPointer; }
+    uint32_t readStackMemory(uint32_t address) const {
+        return busRead(address);
+    }
+
 private:
     uint32_t PROGRAM_START = 0x00000000;
     uint32_t STACK_BASE = 0x7FFFFFFF;
@@ -26,10 +31,12 @@ private:
 
     std::array<uint32_t, 8> registers;
     uint32_t stackPointer;
-    uint32_t programCounter;
-    bool carryFlag;
-
     uint32_t basePointer;
+    uint32_t programCounter;
+    uint32_t statusRegister;
+    uint32_t instructionRegister;
+
+    bool carryFlag;
 
     bool halted;
     bool zeroFlag;
@@ -39,6 +46,8 @@ private:
     uint32_t pop();
     uint32_t top() const;
 
+    uint32_t *getRegisterPtr(uint32_t reg);
+
     bool isEmpty() const;
     uint32_t size() const;
 
@@ -46,5 +55,5 @@ private:
     void updateZeroFlag(uint32_t value);
 
     void busWrite(uint32_t address, uint32_t value);
-    uint32_t busRead(uint32_t address);
+    uint32_t busRead(uint32_t address) const;
 };
