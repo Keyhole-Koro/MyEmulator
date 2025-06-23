@@ -11,6 +11,7 @@ RAM::RAM() : memory(MEM_SIZE, 0) {
 }
 
 bool RAM::inRange(uint32_t address) const {
+    // Check if the address is within the valid
     return address >= BASE_ADDR && address < BASE_ADDR + MEM_SIZE;
 }
 

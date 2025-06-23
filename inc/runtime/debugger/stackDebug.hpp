@@ -8,12 +8,14 @@
 #include "bus/busController.hpp"
 #include "cpu/cpu.hpp"
 
+#include "memoryMap.hpp"
+
 // Function to display the stack contents
 inline void displayStack(const CPU& cpu) {
     std::cout << "Stack Contents:" << std::endl;
 
     uint32_t stackPointer = cpu.getStackPointer();
-    uint32_t stackBase = 0x7FFFFFFF;
+    uint32_t stackBase = MemoryMap::RAM_START + MemoryMap::RAM_SIZE; // Assuming stack starts at the end of RAM
 
     if (stackPointer == stackBase) {
         std::cout << "  [Stack is empty]" << std::endl;

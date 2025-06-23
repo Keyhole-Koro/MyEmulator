@@ -7,6 +7,7 @@
 
 #include "bus/bus.hpp"
 #include "bus/busController.hpp"
+#include "memoryMap.hpp"
 
 class CPU {
 public:
@@ -23,8 +24,8 @@ public:
     }
 
 private:
-    uint32_t PROGRAM_START = 0x00000000;
-    uint32_t STACK_BASE = 0x7FFFFFFF;
+    uint32_t PROGRAM_START = MemoryMap::RAM_START;
+    uint32_t STACK_BASE = MemoryMap::RAM_START + MemoryMap::RAM_SIZE;
 
     Bus& bus;
     BusController& controller;

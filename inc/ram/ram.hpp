@@ -7,10 +7,11 @@
 
 #include "bus/busDevice.hpp"
 #include "bus/bus.hpp"
+#include "memoryMap.hpp"
 
 class RAM : public BusDevice {
-    static constexpr size_t MEM_SIZE = 0x20000000; // 512MB (max addressable memory for 32-bit architecture)
-    static constexpr uint32_t BASE_ADDR = 0x00000000;
+    static constexpr size_t MEM_SIZE = MemoryMap::RAM_SIZE;
+    static constexpr uint32_t BASE_ADDR = MemoryMap::RAM_START;
 
 public:
     RAM(); // Constructor to initialize memory

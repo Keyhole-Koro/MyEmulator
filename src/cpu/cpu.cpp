@@ -64,7 +64,7 @@ uint32_t CPU::getDataRegister(int index) const {
 }
 
 void CPU::push(uint32_t value) {
-    if (stackPointer == 0x00000000) {
+    if (stackPointer == PROGRAM_START) {
         throw std::runtime_error("Stack overflow");
     }
     busWrite(stackPointer--, value);
@@ -73,7 +73,7 @@ void CPU::push(uint32_t value) {
 }
 
 uint32_t CPU::pop() {
-    if (stackPointer >= 0xFFFFFFFF) {
+    if (stackPointer >= STACK_BASE) {
         throw std::runtime_error("Stack underflow");
     }
     return busRead(++stackPointer);
@@ -108,16 +108,11 @@ void CPU::updateZeroFlag(uint32_t value) {
 void CPU::executeInstruction(const uint32_t& instruction) {
     DecodedInstruction inst = decodeInstruction(instruction);
 
-    std::cout << "Executing instruction: "
-              << std::bitset<32>(inst.raw) << " (Opcode: 0x" 
-              << std::hex << static_cast<int>(inst.opcode) << ")" << std::endl;
-
     displayDecodedInstruction(inst);
               
     switch (inst.opcode) {
         case MOV:
             *getRegisterPtr(inst.reg1) = *getRegisterPtr(inst.reg2);
-            printf("MOV R%d, R%d\n", inst.reg1, inst.reg2); 
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
@@ -192,6 +187,7 @@ void CPU::executeInstruction(const uint32_t& instruction) {
 
         case POP:
             *getRegisterPtr(inst.reg1) = pop();
+            printf("Popped value: 0x%08X\n", *getRegisterPtr(inst.reg1));
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
