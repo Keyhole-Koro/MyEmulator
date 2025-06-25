@@ -136,7 +136,7 @@ void CPU::executeInstruction(const uint32_t& instruction) {
             break;
 
         case SUB:
-            *getRegisterPtr(inst.reg1) -= *getRegisterPtr(inst.reg2);
+            *getRegisterPtr(inst.reg1) += *getRegisterPtr(inst.reg2);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
 
