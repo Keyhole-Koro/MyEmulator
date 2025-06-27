@@ -42,7 +42,6 @@ uint32_t CPU::busRead(uint32_t address) const {
 
 void CPU::loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress) {
     for (const auto& instruction : program) {
-        cout << "Loading instruction: 0x" << std::hex << instruction << " at address: 0x" << startAddress << std::dec << std::endl;
         busWrite(startAddress++, instruction);
     }
 }
@@ -109,104 +108,182 @@ void CPU::executeInstruction(const uint32_t& instruction) {
     DecodedInstruction inst = decodeInstruction(instruction);
 
     displayDecodedInstruction(inst);
-              
+
     switch (inst.opcode) {
-        case MOV:
+        case MOV: {
             *getRegisterPtr(inst.reg1) = *getRegisterPtr(inst.reg2);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case MOVI:
-            *getRegisterPtr(inst.reg1) = inst.imm;
+        case MOVI: {
+            uint32_t imm = inst.imm & 0x1FFFFF;
+            *getRegisterPtr(inst.reg1) = imm;
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case LD:
+        case MOVIS: {
+            uint32_t imm = inst.imm & 0x1FFFFF;
+
+            cout << "Before Sign-extending 21-bit immediate: 0x" << std::bitset<32>(imm) << std::dec << std::endl;
+            cout << "After Sign-extending 21-bit immediate: 0x" << std::bitset<32>(imm << 11) << std::dec << std::endl;
+
+            *getRegisterPtr(inst.reg1) = static_cast<int32_t>(imm << 11) >> 11;
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
+            break;
+        }
+
+        case LD: {
             *getRegisterPtr(inst.reg1) = busRead(*getRegisterPtr(inst.reg2));
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case ST:
+        case ST: {
             busWrite(*getRegisterPtr(inst.reg1), *getRegisterPtr(inst.reg2));
             break;
+        }
 
-        case ADD:
+        case ADD: {
             *getRegisterPtr(inst.reg1) += *getRegisterPtr(inst.reg2);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case SUB:
-            *getRegisterPtr(inst.reg1) += *getRegisterPtr(inst.reg2);
-            updateZeroFlag(*getRegisterPtr(inst.reg1));
+        case SUB: {
+            uint32_t lhs = *getRegisterPtr(inst.reg1);
+            uint32_t rhs = *getRegisterPtr(inst.reg2);
+            uint32_t result = lhs - rhs;
+
+            carryFlag = lhs < rhs;
+            zeroFlag = (result == 0);
+            signFlag = (static_cast<int32_t>(result) < 0);
+            overflowFlag = ((static_cast<int32_t>(lhs) < 0) != (static_cast<int32_t>(rhs) < 0)) &&
+                           ((static_cast<int32_t>(lhs) < 0) != (static_cast<int32_t>(result) < 0));
+
+            *getRegisterPtr(inst.reg1) = result;
             break;
+        }
 
-        case CMP:
-            zeroFlag = (*getRegisterPtr(inst.reg1) == *getRegisterPtr(inst.reg2));
+        case CMP: {
+            uint32_t lhs = *getRegisterPtr(inst.reg1);
+            uint32_t rhs = *getRegisterPtr(inst.reg2);
+            uint32_t result = lhs - rhs;
+
+            carryFlag = lhs < rhs;
+            zeroFlag = (result == 0);
+            signFlag = (static_cast<int32_t>(result) < 0);
+            overflowFlag = ((static_cast<int32_t>(lhs) < 0) != (static_cast<int32_t>(rhs) < 0)) &&
+                           ((static_cast<int32_t>(lhs) < 0) != (static_cast<int32_t>(result) < 0));
             break;
+        }
 
-        case AND:
+        case AND: {
             *getRegisterPtr(inst.reg1) &= *getRegisterPtr(inst.reg2);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case OR:
+        case OR: {
             *getRegisterPtr(inst.reg1) |= *getRegisterPtr(inst.reg2);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case XOR:
+        case XOR: {
             *getRegisterPtr(inst.reg1) ^= *getRegisterPtr(inst.reg2);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case SHL:
+        case SHL: {
             *getRegisterPtr(inst.reg1) <<= 1;
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case SHR:
+        case SHR: {
             *getRegisterPtr(inst.reg1) >>= 1;
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case JMP:
-            programCounter += inst.imm - 1; // -1 since pc has already incremented in execute()
+        case JMP: {
+            programCounter += inst.imm - 1;
             break;
+        }
 
-        case JZ:
-            if (zeroFlag) programCounter += inst.imm - 1; // -1 since pc has already incremented in execute()
+        case JZ: {
+            if (zeroFlag) programCounter += inst.imm - 1;
             break;
+        }
 
-        case JNZ:
-            if (!zeroFlag) programCounter += inst.imm - 1; // -1 since pc has already incremented in execute()
+        case JNZ: {
+            if (!zeroFlag) programCounter += inst.imm - 1;
             break;
+        }
 
-        case PUSH:
+        case JG: {
+            if (!zeroFlag && (signFlag == overflowFlag)) {
+                programCounter += inst.imm - 1;
+            }
+            break;
+        }
+
+        case JL: {
+            if (signFlag != overflowFlag) {
+                programCounter += inst.imm - 1;
+            }
+            break;
+        }
+
+        case JA: {
+            if (!carryFlag && !zeroFlag) {
+                programCounter += inst.imm - 1;
+            }
+            break;
+        }
+
+        case JB: {
+            if (carryFlag) {
+                programCounter += inst.imm - 1;
+            }
+            break;
+        }
+
+        case PUSH: {
             push(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case POP:
+        case POP: {
             *getRegisterPtr(inst.reg1) = pop();
             printf("Popped value: 0x%08X\n", *getRegisterPtr(inst.reg1));
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case IN:
-            *getRegisterPtr(inst.reg1) = busRead(0x24000000 + inst.imm); // I/O mapped to high addresses
+        case IN: {
+            *getRegisterPtr(inst.reg1) = busRead(0x24000000 + inst.imm);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case OUT:
+        case OUT: {
             busWrite(0x24000000 + inst.imm, *getRegisterPtr(inst.reg1));
             break;
+        }
 
-        case HALT:
+        case HALT: {
             halted = true;
             break;
+        }
 
-        default:
+        default: {
             std::ostringstream oss;
             oss << "Unknown opcode: 0x" << std::hex << static_cast<int>(inst.opcode);
             throw std::runtime_error(oss.str());
         }
+    }
 }

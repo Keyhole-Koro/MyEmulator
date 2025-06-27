@@ -11,21 +11,7 @@
 #include "bus/busController.hpp"
 
 #include "runtime/debugger/stackDebug.hpp"
-
-std::vector<uint32_t> readBinaryFile(const std::string& filename) {
-    std::ifstream file(filename, std::ios::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error("Unable to open binary file: " + filename);
-    }
-
-    std::vector<uint32_t> data;
-    uint32_t instruction;
-    while (file.read(reinterpret_cast<char*>(&instruction), sizeof(uint32_t))) {
-        data.push_back(instruction);
-    }
-
-    return data;
-}
+#include "runtime/utils.hpp"
 
 int main(int argc, char* argv[]) {
     try {
@@ -69,7 +55,13 @@ int main(int argc, char* argv[]) {
         displayStack(cpu);
 
         for (int i = 0; i <= 7; ++i) {
-            std::cout << "R" << i << ": " << cpu.getDataRegister(i) << std::endl;
+            uint32_t unsignedValue = cpu.getDataRegister(i);
+            int32_t signedValue = static_cast<int32_t>(unsignedValue);
+        
+            // Debugging: Print the binary representation
+            std::cout << "R" << i << ": Unsigned=" << unsignedValue 
+                      << ", Signed=" << signedValue 
+                      << ", Binary=" << std::bitset<32>(unsignedValue) << std::endl;
         }
 
     } catch (const std::exception& e) {

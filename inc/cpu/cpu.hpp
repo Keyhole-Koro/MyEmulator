@@ -37,10 +37,12 @@ private:
     uint32_t statusRegister;
     uint32_t instructionRegister;
 
-    bool carryFlag;
-
     bool halted;
+
+    bool carryFlag;
     bool zeroFlag;
+    bool signFlag;
+    bool overflowFlag;
 
     void mov(const uint32_t& dest, const uint32_t& src);
     void push(uint32_t value);
