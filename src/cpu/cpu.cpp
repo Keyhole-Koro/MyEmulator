@@ -125,10 +125,6 @@ void CPU::executeInstruction(const uint32_t& instruction) {
 
         case MOVIS: {
             uint32_t imm = inst.imm & 0x1FFFFF;
-
-            cout << "Before Sign-extending 21-bit immediate: 0x" << std::bitset<32>(imm) << std::dec << std::endl;
-            cout << "After Sign-extending 21-bit immediate: 0x" << std::bitset<32>(imm << 11) << std::dec << std::endl;
-
             *getRegisterPtr(inst.reg1) = static_cast<int32_t>(imm << 11) >> 11;
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
