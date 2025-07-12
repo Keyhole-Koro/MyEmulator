@@ -13,6 +13,7 @@ enum Instruction : _6bits {
 
     // ➕ Arithmetic / Logic
     ADD   = 0x05,  // reg, reg
+    ADDIS  = 0x19,  // reg, imm16 (sign-extended)
     SUB   = 0x06,  // reg, reg
     CMP   = 0x07,  // reg, reg
     AND   = 0x08,  // reg, reg
@@ -29,6 +30,7 @@ enum Instruction : _6bits {
     JL   = 0x11,  // imm26
     JA   = 0x12,  // imm26
     JB   = 0x13,  // imm26
+    CALL = 0x1B,  // imm26 (call subroutine)
 
     // 📦 Stack
     PUSH  = 0x14,  // reg
@@ -38,6 +40,7 @@ enum Instruction : _6bits {
     IN    = 0x16,  // reg, imm21
     OUT   = 0x17,  // imm21, reg
 
+    DEBUG  = 0x1A,
     // 🛑 Special
     HALT  = 0x3F   // —
 };

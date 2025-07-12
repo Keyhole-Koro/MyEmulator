@@ -16,11 +16,25 @@ public:
     void loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress = 0x00000000);
     void execute();
 
-    uint32_t getDataRegister(int index) const;
 
-    uint32_t getStackPointer() const { return stackPointer; }
     uint32_t readStackMemory(uint32_t address) const {
         return busRead(address);
+    }
+
+    uint32_t getDataRegister(int index) const;
+    uint32_t getStackPointer() const { return stackPointer; }
+    uint32_t getBasePointer() const { return basePointer; }
+    uint32_t getProgramCounter() const { return programCounter; }
+    uint32_t getStatusRegister() const { return statusRegister; }
+    uint32_t getLinkRegister() const { return linkRegister; }
+    bool isHalted() const { return halted; }
+    bool isCarryFlag() const { return carryFlag; }
+    bool isZeroFlag() const { return zeroFlag; }
+    bool isSignFlag() const { return signFlag; }
+    bool isOverflowFlag() const { return overflowFlag; }
+
+    void setInstructionPointer(uint32_t address) {
+        programCounter = address;
     }
 
 private:
@@ -35,7 +49,8 @@ private:
     uint32_t basePointer;
     uint32_t programCounter;
     uint32_t statusRegister;
-    uint32_t instructionRegister;
+    uint32_t linkRegister;
+
 
     bool halted;
 

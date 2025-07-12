@@ -5,6 +5,8 @@
 #include <sstream>
 #include <bitset>
 #include <string>
+#include <iomanip>
+#include <fstream>
 
 #include "runtime/InstructionSet.hpp"
 #include "cpu/decoder.hpp"
@@ -42,15 +44,17 @@ uint32_t CPU::busRead(uint32_t address) const {
 
 void CPU::loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress) {
     for (const auto& instruction : program) {
-        busWrite(startAddress++, instruction);
+        busWrite(startAddress, instruction);
+        startAddress += 4; // Move to the next instruction address
     }
 }
 
 void CPU::execute() {
     while (!halted) {
-        uint32_t instruction = busRead(programCounter++);
+        uint32_t instruction = busRead(programCounter);
+        programCounter += 4; // Move to the next instruction address
         printf("------------------------------\n");
-        printf("PC: 0x%08X, Instruction: 0x%08X\n", programCounter - 1, instruction);
+        printf("PC: 0x%08X, Instruction: 0x%08X\n", programCounter - 4, instruction);
         executeInstruction(instruction);
     }
 }
@@ -66,16 +70,24 @@ void CPU::push(uint32_t value) {
     if (stackPointer == PROGRAM_START) {
         throw std::runtime_error("Stack overflow");
     }
-    busWrite(stackPointer--, value);
-    cout << "read " << busRead(stackPointer + 1) << " from stack at address: 0x" 
-         << std::hex << (stackPointer + 1) << std::dec << std::endl;
+    stackPointer -= 4;  // Move stack pointer down
+    busWrite(stackPointer, value);
+    cout << "read " << busRead(stackPointer + 4) << " from stack at address: 0x" 
+         << std::hex << (stackPointer + 4) << std::dec << std::endl;
 }
 
 uint32_t CPU::pop() {
-    if (stackPointer >= STACK_BASE) {
+    if (stackPointer > STACK_BASE) {
+        cout << "Stack underflow at address: 0x" 
+             << std::hex << stackPointer << std::dec
+                << " (STACKBASE: 0x"
+             << std::hex << STACK_BASE << std::dec
+             << std::endl;
         throw std::runtime_error("Stack underflow");
     }
-    return busRead(++stackPointer);
+    uint32_t value = busRead(stackPointer);
+    stackPointer += 4; // Move stack pointer up
+    return value;
 }
 
 uint32_t *CPU::getRegisterPtr(uint32_t reg) {
@@ -92,7 +104,7 @@ uint32_t *CPU::getRegisterPtr(uint32_t reg) {
         case 0x09: return &stackPointer;
         case 0x0A: return &basePointer;
         case 0x0B: return &statusRegister;
-        case 0x0C: return &instructionRegister;
+        case 0x0C: return &linkRegister;;
         default:
             std::cerr << "Error: Invalid register index " << reg << std::endl;
             throw std::out_of_range("Register index out of range");
@@ -110,6 +122,43 @@ void CPU::executeInstruction(const uint32_t& instruction) {
     displayDecodedInstruction(inst);
 
     switch (inst.opcode) {
+        case DEBUG: {
+            for (int i = 0; i < 8; ++i) {
+                cout << "reg" << i << ": 0x" << std::hex << registers[i] << std::dec << endl;
+            }
+            cout << "PC: 0x" << std::hex << programCounter << std::dec << endl;
+            cout << "SP: 0x" << std::hex << stackPointer << std::dec << endl;
+            cout << "BP: 0x" << std::hex << basePointer << std::dec << endl;
+            cout << "SR: 0x" << std::hex << statusRegister << std::dec << endl;
+            cout << "LR: 0x" << std::hex << linkRegister << std::dec << endl;
+            cout << "Flags: "
+                 << "Zero: " << zeroFlag
+                 << ", Carry: " << carryFlag
+                 << ", Sign: " << signFlag
+                 << ", Overflow: " << overflowFlag << endl;
+        
+            // Generate the filename based on the stack pointer
+            std::string filename = "debug_memory" + std::to_string(programCounter) + ".txt";
+        
+            // Open the file for writing
+            std::ofstream outFile(filename, std::ios::out);
+            if (!outFile.is_open()) {
+                std::cerr << "Error: Unable to open file " << filename << " for writing." << std::endl;
+                break;
+            }
+        
+            // Dump memory content using the read() method
+            uint32_t endAddress = 0x2000000;  // Adjust as needed
+            uint32_t startAddress = 0x20000000 - 0x00001000; // Adjust as needed
+            for (uint32_t address = startAddress; address <= endAddress; address += 4) {
+                uint32_t value = busRead(address); // Use the read method to get memory content
+                outFile << "0x" << std::hex << address << ": 0x" << std::setw(8) << std::setfill('0') << value << std::dec << "\n";
+            }
+        
+            outFile.close();
+            cout << "Memory dump written to " << filename << endl;
+            break;
+        }
         case MOV: {
             *getRegisterPtr(inst.reg1) = *getRegisterPtr(inst.reg2);
             updateZeroFlag(*getRegisterPtr(inst.reg1));
@@ -143,6 +192,14 @@ void CPU::executeInstruction(const uint32_t& instruction) {
 
         case ADD: {
             *getRegisterPtr(inst.reg1) += *getRegisterPtr(inst.reg2);
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
+            break;
+        }
+
+        case ADDIS: {
+            // sign-extended immediate addition
+            uint32_t imm = inst.imm & 0x1FFFFF;
+            *getRegisterPtr(inst.reg1) += static_cast<int32_t>(imm << 11) >> 11;
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
         }
@@ -205,45 +262,55 @@ void CPU::executeInstruction(const uint32_t& instruction) {
             break;
         }
 
+        case CALL: {
+            linkRegister = programCounter; // Save current PC to link register
+            programCounter += inst.imm - 4; // Adjust PC for the next instruction
+            break;
+        }
+
         case JMP: {
-            programCounter += inst.imm - 1;
+            programCounter += inst.imm - 4;
             break;
         }
 
         case JZ: {
-            if (zeroFlag) programCounter += inst.imm - 1;
+            if (zeroFlag) {
+                programCounter += inst.imm - 4;
+            }
             break;
         }
 
         case JNZ: {
-            if (!zeroFlag) programCounter += inst.imm - 1;
+            if (!zeroFlag) {
+                programCounter += inst.imm - 4;
+            }
             break;
         }
 
         case JG: {
             if (!zeroFlag && (signFlag == overflowFlag)) {
-                programCounter += inst.imm - 1;
+                programCounter += inst.imm - 4;
             }
             break;
         }
 
         case JL: {
             if (signFlag != overflowFlag) {
-                programCounter += inst.imm - 1;
+                programCounter += inst.imm - 4;
             }
             break;
         }
 
         case JA: {
             if (!carryFlag && !zeroFlag) {
-                programCounter += inst.imm - 1;
+                programCounter += inst.imm - 4;
             }
             break;
         }
 
         case JB: {
             if (carryFlag) {
-                programCounter += inst.imm - 1;
+                programCounter += inst.imm - 4;
             }
             break;
         }
@@ -255,7 +322,6 @@ void CPU::executeInstruction(const uint32_t& instruction) {
 
         case POP: {
             *getRegisterPtr(inst.reg1) = pop();
-            printf("Popped value: 0x%08X\n", *getRegisterPtr(inst.reg1));
             updateZeroFlag(*getRegisterPtr(inst.reg1));
             break;
         }

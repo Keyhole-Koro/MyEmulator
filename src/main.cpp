@@ -15,18 +15,24 @@
 
 int main(int argc, char* argv[]) {
     try {
-        bool testMode = false;
-        std::string filename;
+        std::string input_file;
+        std::string output_file;
 
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
 
-            if (arg == "-t") {
+            if (arg == "-i" || arg == "--in") {
                 if (i + 1 < argc) {
-                    filename = argv[++i];
-                    testMode = true;
+                    input_file = argv[++i];
                 } else {
-                    std::cerr << "Error: -t requires a filename argument" << std::endl;
+                    std::cerr << "Error: -i/--in requires a filename argument" << std::endl;
+                    return 1;
+                }
+            } else if (arg == "-o" || arg == "--out") {
+                if (i + 1 < argc) {
+                    output_file = argv[++i];
+                } else {
+                    std::cerr << "Error: -o/--out requires a filename argument" << std::endl;
                     return 1;
                 }
             } else {
@@ -35,13 +41,13 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (!testMode || filename.empty()) {
-            std::cerr << "Usage: myemulator -t <binary_file>" << std::endl;
+        if (input_file.empty()) {
+            std::cerr << "Usage: myemulator -i <binary_file> [-o <output_file>]" << std::endl;
             return 1;
         }
 
-        std::cout << "Test mode: loading binary from " << filename << std::endl;
-        std::vector<uint32_t> binary = readBinaryFile(filename);
+        std::cout << "Loading binary from " << input_file << std::endl;
+        std::vector<uint32_t> binary = readBinaryFile(input_file);
 
         Bus bus;
         BusController controller;
@@ -49,19 +55,49 @@ int main(int argc, char* argv[]) {
         controller.addDevice(&ram);
         CPU cpu(bus, controller);
 
-        cpu.loadProgram(binary, 0x00000000);
+        uint32_t start_address = 0x00000000;
+        cpu.loadProgram(binary, start_address);
+        cpu.setInstructionPointer(start_address);
         cpu.execute();
 
         displayStack(cpu);
 
+        std::ostringstream oss;
         for (int i = 0; i <= 7; ++i) {
             uint32_t unsignedValue = cpu.getDataRegister(i);
             int32_t signedValue = static_cast<int32_t>(unsignedValue);
-        
-            // Debugging: Print the binary representation
-            std::cout << "R" << i << ": Unsigned=" << unsignedValue 
-                      << ", Signed=" << signedValue 
-                      << ", Binary=" << std::bitset<32>(unsignedValue) << std::endl;
+            oss << "R" << i << ": Unsigned=" << unsignedValue
+                << ", Signed=" << signedValue
+                << ", Binary=" << std::bitset<32>(unsignedValue) << std::endl;
+        }
+        oss << "SP: " << std::hex << cpu.getStackPointer() << std::endl;
+        oss << "BP: " << std::hex << cpu.getBasePointer() << std::endl;
+        oss << "PC: " << std::hex << cpu.getProgramCounter() << std::endl;
+        oss << "SR: " << std::hex << cpu.getStatusRegister() << std::endl;
+        oss << "LR: " << std::hex << cpu.getLinkRegister() << std::endl;
+        oss << "Flags: "
+            << "Carry=" << cpu.isCarryFlag() << ", "
+            << "Zero=" << cpu.isZeroFlag() << ", "
+            << "Sign=" << cpu.isSignFlag() << ", "
+            << "Overflow=" << cpu.isOverflowFlag() << std::endl;
+
+        // Call the RAM dump method
+        std::string dumpFile = "memory_dump.txt";
+        uint32_t startAddress = 0x00000000; // Adjust as needed
+        uint32_t endAddress = 0x0000FFFF;  // Adjust as needed
+        ram.dump(dumpFile, startAddress, endAddress);
+        cout << "Memory dump written to " << dumpFile << endl;
+
+        if (output_file.empty()) {
+            std::cout << oss.str();
+        } else {
+            std::ofstream ofs(output_file);
+            if (!ofs) {
+                std::cerr << "Failed to open output file: " << output_file << std::endl;
+                return 1;
+            }
+            ofs << oss.str();
+            std::cout << "Output written to " << output_file << std::endl;
         }
 
     } catch (const std::exception& e) {

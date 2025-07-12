@@ -31,9 +31,15 @@ $(TARGET): $(OBJ) | $(BUILD_DIR)
 $(STATIC_LIB): $(filter-out $(BUILD_DIR)/src/main.o, $(OBJ)) | $(BUILD_DIR)
 	ar rcs $@ $^
 
-run: $(TARGET)
-	./$(TARGET) $(ARGS)
+IN ?= tests/outputs/sample.bin
+OUT ?=
 
+run-myemu: $(TARGET)
+	@if [ -z "$(OUT)" ]; then \
+		./$(TARGET) -i $(IN); \
+	else \
+		./$(TARGET) -i $(IN) -o $(OUT); \
+	fi
 gdb: $(TARGET)
 	gdb --args ./$(TARGET) $(ARGS)
 
