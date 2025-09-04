@@ -27,6 +27,7 @@ CPU::CPU(Bus& bus, BusController& controller)
 void CPU::busWrite(uint32_t address, uint32_t value) {
     bus.address = address;
     bus.data = value;
+    bus.accessSize = 4;
     bus.write = true;
     bus.read = false;
     controller.tick(bus);  // Let the bus handle the write
@@ -35,11 +36,32 @@ void CPU::busWrite(uint32_t address, uint32_t value) {
 
 uint32_t CPU::busRead(uint32_t address) const {
     bus.address = address;
+    bus.accessSize = 4;
     bus.read = true;
     bus.write = false;
     controller.tick(bus);  // Let the bus handle the read
     bus.read = false;      // Reset
     return bus.data;
+}
+
+void CPU::busWriteByte(uint32_t address, uint8_t value) {
+    bus.address = address;
+    bus.data = value;
+    bus.accessSize = 1;
+    bus.write = true;
+    bus.read = false;
+    controller.tick(bus);
+    bus.write = false;
+}
+
+uint8_t CPU::busReadByte(uint32_t address) const {
+    bus.address = address;
+    bus.accessSize = 1;
+    bus.read = true;
+    bus.write = false;
+    controller.tick(bus);
+    bus.read = false;
+    return static_cast<uint8_t>(bus.data & 0xFF);
 }
 
 void CPU::loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress) {
@@ -116,6 +138,10 @@ void CPU::updateZeroFlag(uint32_t value) {
     zeroFlag = (value == 0);
 }
 
+int32_t sign_extend_26bit(uint32_t x) {
+    return ((int32_t)(x << 6)) >> 6;
+}
+
 void CPU::executeInstruction(const uint32_t& instruction) {
     DecodedInstruction inst = decodeInstruction(instruction);
 
@@ -138,7 +164,7 @@ void CPU::executeInstruction(const uint32_t& instruction) {
                  << ", Overflow: " << overflowFlag << endl;
         
             // Generate the filename based on the stack pointer
-            std::string filename = "debug_memory" + std::to_string(programCounter) + ".txt";
+            std::string filename = "memory_dump" + std::to_string(programCounter) + ".txt";
         
             // Open the file for writing
             std::ofstream outFile(filename, std::ios::out);
@@ -187,6 +213,19 @@ void CPU::executeInstruction(const uint32_t& instruction) {
 
         case ST: {
             busWrite(*getRegisterPtr(inst.reg1), *getRegisterPtr(inst.reg2));
+            break;
+        }
+
+        case LDB: {
+            // r1 <- byte at mem[r2] (zero-extend)
+            *getRegisterPtr(inst.reg1) = static_cast<uint32_t>(busReadByte(*getRegisterPtr(inst.reg2)));
+            updateZeroFlag(*getRegisterPtr(inst.reg1));
+            break;
+        }
+
+        case STB: {
+            // mem[r1] <- low byte of r2
+            busWriteByte(*getRegisterPtr(inst.reg1), static_cast<uint8_t>(*getRegisterPtr(inst.reg2) & 0xFF));
             break;
         }
 
@@ -263,54 +302,62 @@ void CPU::executeInstruction(const uint32_t& instruction) {
         }
 
         case CALL: {
-            linkRegister = programCounter; // Save current PC to link register
-            programCounter += inst.imm - 4; // Adjust PC for the next instruction
+            linkRegister = programCounter;
+            int32_t offset = sign_extend_26bit(inst.imm);
+            programCounter += offset - 4;
             break;
         }
 
         case JMP: {
-            programCounter += inst.imm - 4;
+            int32_t offset = sign_extend_26bit(inst.imm);
+            programCounter += offset - 4;
             break;
         }
 
         case JZ: {
             if (zeroFlag) {
-                programCounter += inst.imm - 4;
+                int32_t offset = sign_extend_26bit(inst.imm);
+                programCounter += offset - 4;
             }
             break;
         }
 
         case JNZ: {
             if (!zeroFlag) {
-                programCounter += inst.imm - 4;
+                int32_t offset = sign_extend_26bit(inst.imm);
+                programCounter += offset - 4;
             }
             break;
         }
 
         case JG: {
             if (!zeroFlag && (signFlag == overflowFlag)) {
-                programCounter += inst.imm - 4;
+                int32_t offset = sign_extend_26bit(inst.imm);
+                programCounter += offset - 4;
             }
             break;
         }
 
         case JL: {
             if (signFlag != overflowFlag) {
-                programCounter += inst.imm - 4;
+                int32_t offset = sign_extend_26bit(inst.imm);
+                programCounter += offset - 4;
             }
             break;
         }
 
         case JA: {
             if (!carryFlag && !zeroFlag) {
-                programCounter += inst.imm - 4;
+                int32_t offset = sign_extend_26bit(inst.imm);
+                programCounter += offset - 4;
             }
             break;
         }
 
         case JB: {
             if (carryFlag) {
-                programCounter += inst.imm - 4;
+                int32_t offset = sign_extend_26bit(inst.imm);
+                programCounter += offset - 4;
             }
             break;
         }

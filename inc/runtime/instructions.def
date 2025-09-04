@@ -1,0 +1,39 @@
+// name, opcode, immediate_format
+// immediate_format: IMM16 (default/unused), IMM21, IMM26
+
+INSTR(MOV,   0x01, IMM16)   // reg, reg
+INSTR(MOVI,  0x02, IMM21)   // reg, imm21 (zero-extended)
+INSTR(MOVIS, 0x18, IMM21)   // reg, imm21 (sign-extended)
+INSTR(LD,    0x03, IMM16)   // reg, reg
+INSTR(ST,    0x04, IMM16)   // reg, reg
+INSTR(LDB,   0x1C, IMM16)   // reg, reg (byte load)
+INSTR(STB,   0x1D, IMM16)   // reg, reg (byte store)
+
+INSTR(ADD,   0x05, IMM16)   // reg, reg
+INSTR(ADDIS, 0x19, IMM21)   // reg, imm21 (sign-extended)
+INSTR(SUB,   0x06, IMM16)   // reg, reg
+INSTR(CMP,   0x07, IMM16)   // reg, reg
+INSTR(AND,   0x08, IMM16)   // reg, reg
+INSTR(OR,    0x09, IMM16)   // reg, reg
+INSTR(XOR,   0x0A, IMM16)   // reg, reg
+INSTR(SHL,   0x0B, IMM16)   // reg
+INSTR(SHR,   0x0C, IMM16)   // reg
+
+INSTR(JMP,   0x0D, IMM26)   // imm26
+INSTR(JZ,    0x0E, IMM26)   // imm26
+INSTR(JNZ,   0x0F, IMM26)   // imm26
+INSTR(JG,    0x10, IMM26)   // imm26
+INSTR(JL,    0x11, IMM26)   // imm26
+INSTR(JA,    0x12, IMM26)   // imm26
+INSTR(JB,    0x13, IMM26)   // imm26
+INSTR(CALL,  0x1B, IMM26)   // imm26
+
+INSTR(PUSH,  0x14, IMM16)   // reg
+INSTR(POP,   0x15, IMM16)   // reg
+
+INSTR(IN,    0x16, IMM21)   // reg, imm21 (port)
+INSTR(OUT,   0x17, IMM21)   // imm21, reg (port)
+
+INSTR(DEBUG, 0x1A, IMM16)
+INSTR(HALT,  0x3F, IMM16)
+

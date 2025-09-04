@@ -74,4 +74,8 @@ private:
 
     void busWrite(uint32_t address, uint32_t value);
     uint32_t busRead(uint32_t address) const;
+
+    // Byte access helpers
+    void busWriteByte(uint32_t address, uint8_t value);
+    uint8_t busReadByte(uint32_t address) const;
 };

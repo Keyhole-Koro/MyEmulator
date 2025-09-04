@@ -17,9 +17,18 @@ bool RAM::inRange(uint32_t address) const {
 }
 
 void RAM::read(uint32_t address, Bus& bus) {
-    checkRange(address);
+    // Determine access size (default to 4 if somehow zero)
+    const uint8_t size = bus.accessSize ? bus.accessSize : 4;
+    checkRange(address, size);
     uint32_t offset = address - BASE_ADDR;
-    // Combine 4 bytes in big-endian order to form a 32-bit value
+
+    if (size == 1) {
+        // Byte read: zero-extend to 32 bits
+        bus.data = static_cast<uint32_t>(memory[offset]);
+        return;
+    }
+
+    // Word read (4 bytes) in big-endian order
     uint32_t value = 0;
     for (int i = 0; i < 4; ++i) {
         value = (value << 8) | memory[offset + i];
@@ -28,8 +37,16 @@ void RAM::read(uint32_t address, Bus& bus) {
 }
 
 void RAM::write(uint32_t address, Bus& bus) {
-    checkRange(address);
+    const uint8_t size = bus.accessSize ? bus.accessSize : 4;
+    checkRange(address, size);
     uint32_t offset = address - BASE_ADDR;
+
+    if (size == 1) {
+        // Byte write: write only low 8 bits
+        memory[offset] = static_cast<uint8_t>(bus.data & 0xFF);
+        return;
+    }
+
     uint32_t value = static_cast<uint32_t>(bus.data);
     // Split 32-bit value into 4 bytes in big-endian order
     for (int i = 3; i >= 0; --i) {
@@ -42,9 +59,9 @@ size_t RAM::size() const noexcept {
     return MEM_SIZE;
 }
 
-void RAM::checkRange(uint32_t address) const {
-    // Ensure the address is in range and has enough space for 4 bytes
-    if (!inRange(address) || (address - BASE_ADDR + 4) > MEM_SIZE) {
+void RAM::checkRange(uint32_t address, size_t sizeBytes) const {
+    // Ensure the address is in range and has enough space for requested size
+    if (!inRange(address) || (address - BASE_ADDR + sizeBytes) > MEM_SIZE) {
         throw std::out_of_range("Address out of range");
     }
 }

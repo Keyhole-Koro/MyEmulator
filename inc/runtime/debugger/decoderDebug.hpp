@@ -7,6 +7,8 @@
 #include <cstdint>
 
 #include "cpu/decoder.hpp"
+#include "runtime/InstructionSet.hpp"
+#include "runtime/instructionInfo.hpp"
 
 // Convert uint32_t to binary string with spaces every 4 bits (MSB first)
 inline std::string bin4spaces(uint32_t value) {
@@ -24,6 +26,7 @@ inline void displayDecodedInstruction(const DecodedInstruction& instruction) {
         << "Raw: 0x" << std::hex << std::setw(8) << std::setfill('0') << instruction.raw
         << "  [" << bin4spaces(instruction.raw) << "]"
         << "  | OPC: 0x" << std::hex << static_cast<int>(instruction.opcode)
+        << " (" << InstructionInfo::getMnemonic(static_cast<uint8_t>(instruction.opcode)) << ")"
         << " R1: 0x" << static_cast<int>(instruction.reg1)
         << " R2: 0x" << static_cast<int>(instruction.reg2)
         << " IMM: 0x" << std::hex << instruction.imm

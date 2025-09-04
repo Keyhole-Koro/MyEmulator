@@ -26,7 +26,7 @@ public:
 private:
     std::vector<uint8_t> memory; // Memory as a byte array
 
-    void checkRange(uint32_t address) const;
+    void checkRange(uint32_t address, size_t sizeBytes) const;
 };
 
 #endif // RAM_HPP

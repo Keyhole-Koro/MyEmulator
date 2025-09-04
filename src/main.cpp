@@ -17,6 +17,7 @@ int main(int argc, char* argv[]) {
     try {
         std::string input_file;
         std::string output_file;
+        std::string target_reg;
 
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -35,6 +36,13 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Error: -o/--out requires a filename argument" << std::endl;
                     return 1;
                 }
+            } else if (arg == "--reg") {
+                if (i + 1 < argc) {
+                    target_reg = argv[++i];  // e.g., "R1"
+                } else {
+                    std::cerr << "Error: --reg requires a register name like R0..R7" << std::endl;
+                    return 1;
+                }
             } else {
                 std::cerr << "Unknown option: " << arg << std::endl;
                 return 1;
@@ -45,6 +53,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "Usage: myemulator -i <binary_file> [-o <output_file>]" << std::endl;
             return 1;
         }
+
 
         std::cout << "Loading binary from " << input_file << std::endl;
         std::vector<uint32_t> binary = readBinaryFile(input_file);
@@ -100,6 +109,20 @@ int main(int argc, char* argv[]) {
             std::cout << "Output written to " << output_file << std::endl;
         }
 
+        
+        if (!target_reg.empty()) {
+            if (target_reg[0] == 'R' && target_reg.size() == 2 && isdigit(target_reg[1])) {
+                int reg_num = target_reg[1] - '0';
+                if (reg_num >= 0 && reg_num <= 7) {
+                    std::cout << cpu.getDataRegister(reg_num) << std::endl;
+                    return 0;
+                }
+            }
+            std::cerr << "Invalid register name: " << target_reg << std::endl;
+            return 1;
+        }
+
+        
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;

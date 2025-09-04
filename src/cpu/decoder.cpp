@@ -1,5 +1,7 @@
 #include "cpu/decoder.hpp"
 #include "runtime/InstructionSet.hpp"
+#include "runtime/instructionInfo.hpp"
+#include <cstdio>
 
 DecodedInstruction decodeInstruction(const uint32_t machineCode) {
     DecodedInstruction inst;
@@ -9,27 +11,7 @@ DecodedInstruction decodeInstruction(const uint32_t machineCode) {
     inst.reg1 = (machineCode >> 21) & 0x1F; // 5-bit reg1
     inst.reg2 = (machineCode >> 16) & 0x1F; // 5-bit reg2
 
-    switch (inst.opcode) {
-        case JMP:
-        case JZ:
-        case JNZ:
-        case JG:
-        case JL:
-        case JA:
-        case JB:
-        case CALL:
-            inst.imm = machineCode & 0x03FFFFFF; // 26-bit immediate
-        case MOVI:
-        case MOVIS:
-        case ADDIS:
-        case IN:
-        case OUT:
-            inst.imm = machineCode & 0x001FFFFF; // 21-bit immediate
-            break;
-        default:
-            inst.imm = machineCode & 0xFFFF; // 16-bit immediate for other instructions
-            break;
-    }
-
+    const auto fmt = InstructionInfo::getImmFmt(static_cast<uint8_t>(inst.opcode));
+    inst.imm = machineCode & InstructionInfo::immMask(fmt);
     return inst;
 }

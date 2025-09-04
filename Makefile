@@ -6,7 +6,7 @@ SRC_NO_MAIN = $(filter-out src/main.cpp, $(SRC))
 
 BUILD_DIR = build
 OBJ = $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(SRC))
-TARGET = $(BUILD_DIR)/MyEmulator
+TARGET = $(BUILD_DIR)/myemu
 
 TEST_SRC = $(wildcard tests/*.cpp)
 TEST_OBJ = $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(TEST_SRC))
