@@ -11,7 +11,7 @@
 
 class CPU {
 public:
-    explicit CPU(Bus& bus, BusController& controller);
+    explicit CPU(Bus& bus, BusController& controller, bool verbose = false);
 
     void loadProgram(const std::vector<uint32_t>& program, uint32_t startAddress = 0x00000000);
     void execute();
@@ -45,6 +45,7 @@ private:
     BusController& controller;
 
     std::array<uint32_t, 8> registers;
+    bool verbose;
     uint32_t stackPointer;
     uint32_t basePointer;
     uint32_t programCounter;

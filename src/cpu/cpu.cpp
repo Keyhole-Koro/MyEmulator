@@ -14,8 +14,8 @@
 
 using namespace std;
 
-CPU::CPU(Bus& bus, BusController& controller)
-    : bus(bus), controller(controller),
+CPU::CPU(Bus& bus, BusController& controller, bool verbose)
+    : bus(bus), controller(controller), verbose(verbose),
       programCounter(PROGRAM_START),
       stackPointer(STACK_BASE),
       halted(false),
@@ -75,8 +75,10 @@ void CPU::execute() {
     while (!halted) {
         uint32_t instruction = busRead(programCounter);
         programCounter += 4; // Move to the next instruction address
-        printf("------------------------------\n");
-        printf("PC: 0x%08X, Instruction: 0x%08X\n", programCounter - 4, instruction);
+        if (verbose) {
+            printf("------------------------------\n");
+            printf("PC: 0x%08X, Instruction: 0x%08X\n", programCounter - 4, instruction);
+        }
         executeInstruction(instruction);
     }
 }
@@ -94,8 +96,10 @@ void CPU::push(uint32_t value) {
     }
     stackPointer -= 4;  // Move stack pointer down
     busWrite(stackPointer, value);
-    cout << "read " << busRead(stackPointer + 4) << " from stack at address: 0x" 
-         << std::hex << (stackPointer + 4) << std::dec << std::endl;
+    if (verbose) {
+        cout << "read " << busRead(stackPointer + 4) << " from stack at address: 0x" 
+             << std::hex << (stackPointer + 4) << std::dec << std::endl;
+    }
 }
 
 uint32_t CPU::pop() {
@@ -145,7 +149,9 @@ int32_t sign_extend_26bit(uint32_t x) {
 void CPU::executeInstruction(const uint32_t& instruction) {
     DecodedInstruction inst = decodeInstruction(instruction);
 
-    displayDecodedInstruction(inst);
+    if (verbose) {
+        displayDecodedInstruction(inst);
+    }
 
     switch (inst.opcode) {
         case DEBUG: {

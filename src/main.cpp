@@ -18,6 +18,7 @@ int main(int argc, char* argv[]) {
         std::string input_file;
         std::string output_file;
         std::string target_reg;
+        bool verbose = false;
 
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -43,6 +44,8 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Error: --reg requires a register name like R0..R7" << std::endl;
                     return 1;
                 }
+            } else if (arg == "-v" || arg == "--verbose") {
+                verbose = true;
             } else {
                 std::cerr << "Unknown option: " << arg << std::endl;
                 return 1;
@@ -62,7 +65,7 @@ int main(int argc, char* argv[]) {
         BusController controller;
         RAM ram;
         controller.addDevice(&ram);
-        CPU cpu(bus, controller);
+        CPU cpu(bus, controller, verbose);
 
         uint32_t start_address = 0x00000000;
         cpu.loadProgram(binary, start_address);
