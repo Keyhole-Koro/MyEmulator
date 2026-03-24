@@ -12,9 +12,13 @@ std::vector<uint32_t> readBinaryFile(const std::string& filename) {
     }
 
     std::vector<uint32_t> data;
-    uint32_t instruction;
-    while (file.read(reinterpret_cast<char*>(&instruction), sizeof(uint32_t))) {
-        data.push_back(instruction);
+    unsigned char bytes[4];
+    while (file.read(reinterpret_cast<char*>(bytes), 4)) {
+        uint32_t word = (static_cast<uint32_t>(bytes[0]) << 24) |
+                        (static_cast<uint32_t>(bytes[1]) << 16) |
+                        (static_cast<uint32_t>(bytes[2]) << 8)  |
+                        (static_cast<uint32_t>(bytes[3]));
+        data.push_back(word);
     }
 
     return data;
