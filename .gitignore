@@ -4,5 +4,6 @@
 *.bin
 
 build/
+target/
 
 memory_dump*.txt
