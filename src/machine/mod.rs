@@ -4,9 +4,17 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::constants::{RAM_END_EXCLUSIVE, RAM_START};
+use crate::instruction::{decode_instruction, mnemonic};
 
 mod cpu_exec;
 mod memory_bus;
+
+#[derive(Clone, Copy, Default)]
+pub struct DebugOptions {
+    pub trace: bool,
+    pub break_addr: Option<u32>,
+    pub step_count: Option<u64>,
+}
 
 pub struct Machine {
     // Sparse byte-addressed RAM keeps behavior while avoiding eager 512MB allocation.
@@ -104,17 +112,48 @@ impl Machine {
     }
 
     pub fn execute(&mut self) -> Result<(), String> {
+        self.execute_with_debug(DebugOptions::default())
+    }
+
+    pub fn execute_with_debug(&mut self, options: DebugOptions) -> Result<(), String> {
+        let mut executed_steps = 0u64;
         while !self.halted {
-            let instruction = self.bus_read(self.program_counter);
             let current_pc = self.program_counter;
+            if let Some(break_addr) = options.break_addr {
+                if current_pc == break_addr {
+                    println!("[BREAK] hit 0x{:08X}", current_pc);
+                    self.print_registers();
+                    return Ok(());
+                }
+            }
+
+            let instruction = self.bus_read(self.program_counter);
             self.program_counter = self.program_counter.wrapping_add(4);
 
-            if self.verbose {
+            if self.verbose || options.trace {
+                let inst = decode_instruction(instruction);
                 println!("------------------------------");
-                println!("PC: 0x{:08X}, Instruction: 0x{:08X}", current_pc, instruction);
+                println!(
+                    "PC: 0x{:08X}, Instruction: 0x{:08X}, {} r1=0x{:X} r2=0x{:X} imm=0x{:X}",
+                    current_pc,
+                    instruction,
+                    mnemonic(inst.opcode),
+                    inst.reg1,
+                    inst.reg2,
+                    inst.imm
+                );
             }
 
             self.execute_instruction(instruction)?;
+            executed_steps = executed_steps.wrapping_add(1);
+
+            if let Some(step_limit) = options.step_count {
+                if executed_steps >= step_limit {
+                    println!("[STEP] paused after {} instruction(s)", executed_steps);
+                    self.print_registers();
+                    return Ok(());
+                }
+            }
         }
         Ok(())
     }
@@ -182,6 +221,48 @@ impl Machine {
 
         println!("Memory dump written to {}", filename.as_ref().display());
         Ok(())
+    }
+
+    pub fn dump_memory_range(&self, start_address: u32, length: u32) {
+        if length == 0 {
+            println!("[MEM] empty range");
+            return;
+        }
+
+        let end_address = start_address.saturating_add(length.saturating_sub(1));
+        println!(
+            "[MEM] 0x{:08X}..0x{:08X} ({} byte(s))",
+            start_address, end_address, length
+        );
+
+        let mut address = start_address;
+        let mut remaining = length;
+        while remaining > 0 {
+            print!("0x{:08X}:", address);
+            let line_bytes = remaining.min(16);
+            for i in 0..line_bytes {
+                let byte = self.bus_read_byte(address.wrapping_add(i)) as u8;
+                print!(" {:02X}", byte);
+            }
+            println!();
+            address = address.wrapping_add(line_bytes);
+            remaining -= line_bytes;
+        }
+    }
+
+    pub fn print_registers(&self) {
+        for i in 0..=7 {
+            println!("R{}: 0x{:08X}", i, self.registers[i]);
+        }
+        println!("SP: 0x{:08X}", self.stack_pointer);
+        println!("BP: 0x{:08X}", self.base_pointer);
+        println!("PC: 0x{:08X}", self.program_counter);
+        println!("SR: 0x{:08X}", self.status_register);
+        println!("LR: 0x{:08X}", self.link_register);
+        println!(
+            "FLAGS: C={} Z={} S={} O={}",
+            self.carry_flag, self.zero_flag, self.sign_flag, self.overflow_flag
+        );
     }
 
     fn get_register(&self, reg: u8) -> Result<u32, String> {

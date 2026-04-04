@@ -5,6 +5,31 @@ pub struct Args {
     pub output_file: String,
     pub target_reg: String,
     pub verbose: bool,
+    pub trace: bool,
+    pub break_addr: Option<u32>,
+    pub step_count: Option<u64>,
+    pub print_regs: bool,
+    pub mem_range: Option<(u32, u32)>,
+}
+
+fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
+    if let Some(stripped) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        u32::from_str_radix(stripped, 16)
+            .map_err(|_| format!("{} expects a valid u32 value, got '{}'", option_name, raw))
+    } else {
+        raw.parse::<u32>()
+            .map_err(|_| format!("{} expects a valid u32 value, got '{}'", option_name, raw))
+    }
+}
+
+fn parse_u64_value(raw: &str, option_name: &str) -> Result<u64, String> {
+    if let Some(stripped) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        u64::from_str_radix(stripped, 16)
+            .map_err(|_| format!("{} expects a valid u64 value, got '{}'", option_name, raw))
+    } else {
+        raw.parse::<u64>()
+            .map_err(|_| format!("{} expects a valid u64 value, got '{}'", option_name, raw))
+    }
 }
 
 pub fn parse_args() -> Result<Args, String> {
@@ -14,6 +39,11 @@ pub fn parse_args() -> Result<Args, String> {
     let mut output_file = String::new();
     let mut target_reg = String::new();
     let mut verbose = false;
+    let mut trace = false;
+    let mut break_addr = None;
+    let mut step_count = None;
+    let mut print_regs = false;
+    let mut mem_range = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -35,6 +65,36 @@ pub fn parse_args() -> Result<Args, String> {
             "-v" | "--verbose" => {
                 verbose = true;
             }
+            "--trace" => {
+                trace = true;
+            }
+            "--break" => {
+                let raw = args
+                    .next()
+                    .ok_or_else(|| "--break requires an address like 0x40".to_string())?;
+                break_addr = Some(parse_u32_value(&raw, "--break")?);
+            }
+            "--step" => {
+                let raw = args
+                    .next()
+                    .ok_or_else(|| "--step requires a count like 10".to_string())?;
+                step_count = Some(parse_u64_value(&raw, "--step")?);
+            }
+            "--regs" => {
+                print_regs = true;
+            }
+            "--mem" => {
+                let start_raw = args
+                    .next()
+                    .ok_or_else(|| "--mem requires <addr> <len>".to_string())?;
+                let len_raw = args
+                    .next()
+                    .ok_or_else(|| "--mem requires <addr> <len>".to_string())?;
+                mem_range = Some((
+                    parse_u32_value(&start_raw, "--mem")?,
+                    parse_u32_value(&len_raw, "--mem")?,
+                ));
+            }
             _ => {
                 return Err(format!("Unknown option: {}", arg));
             }
@@ -50,5 +110,10 @@ pub fn parse_args() -> Result<Args, String> {
         output_file,
         target_reg,
         verbose,
+        trace,
+        break_addr,
+        step_count,
+        print_regs,
+        mem_range,
     })
 }

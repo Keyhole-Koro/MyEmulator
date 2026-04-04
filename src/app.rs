@@ -1,6 +1,6 @@
 use crate::cli::parse_args;
 use crate::loader::read_binary_file;
-use crate::machine::Machine;
+use crate::machine::{DebugOptions, Machine};
 
 pub fn run() -> Result<(), String> {
     let args = parse_args()?;
@@ -12,9 +12,29 @@ pub fn run() -> Result<(), String> {
     let start_address = 0x0000_0000;
     machine.load_program(&binary, start_address);
     machine.set_instruction_pointer(start_address);
-    machine.execute()?;
+    let debug_mode = args.trace
+        || args.break_addr.is_some()
+        || args.step_count.is_some()
+        || args.print_regs
+        || args.mem_range.is_some();
+    machine.execute_with_debug(DebugOptions {
+        trace: args.trace,
+        break_addr: args.break_addr,
+        step_count: args.step_count,
+    })?;
 
-    machine.display_stack();
+    if !debug_mode {
+        machine.display_stack();
+    }
+
+    let already_printed_regs = args.step_count.is_some() || args.break_addr.is_some();
+    if args.print_regs && !already_printed_regs {
+        machine.print_registers();
+    }
+
+    if let Some((addr, len)) = args.mem_range {
+        machine.dump_memory_range(addr, len);
+    }
 
     let mut report = String::new();
     for i in 0..=7 {
@@ -38,13 +58,15 @@ pub fn run() -> Result<(), String> {
         machine.overflow_flag()
     ));
 
-    let dump_file = "memory_dump.txt";
-    machine.dump_memory_text(dump_file, 0x0000_0000, 0x0000_FFFF)?;
-    println!("Memory dump written to {}", dump_file);
+    if !debug_mode {
+        let dump_file = "memory_dump.txt";
+        machine.dump_memory_text(dump_file, 0x0000_0000, 0x0000_FFFF)?;
+        println!("Memory dump written to {}", dump_file);
+    }
 
-    if args.output_file.is_empty() {
+    if args.output_file.is_empty() && !debug_mode {
         print!("{}", report);
-    } else {
+    } else if !args.output_file.is_empty() {
         std::fs::write(&args.output_file, report)
             .map_err(|e| format!("Failed to open output file: {} ({})", args.output_file, e))?;
         println!("Output written to {}", args.output_file);
