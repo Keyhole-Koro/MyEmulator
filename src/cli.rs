@@ -3,6 +3,7 @@ use std::env;
 pub struct Args {
     pub input_file: String,
     pub output_file: String,
+    pub log_dir: String,
     pub target_reg: String,
     pub verbose: bool,
     pub trace: bool,
@@ -37,6 +38,7 @@ pub fn parse_args() -> Result<Args, String> {
 
     let mut input_file = String::new();
     let mut output_file = String::new();
+    let mut log_dir = String::new();
     let mut target_reg = String::new();
     let mut verbose = false;
     let mut trace = false;
@@ -56,6 +58,11 @@ pub fn parse_args() -> Result<Args, String> {
                 output_file = args
                     .next()
                     .ok_or_else(|| "-o/--out requires a filename argument".to_string())?;
+            }
+            "--log-dir" => {
+                log_dir = args
+                    .next()
+                    .ok_or_else(|| "--log-dir requires a directory argument".to_string())?;
             }
             "--reg" => {
                 target_reg = args
@@ -108,6 +115,7 @@ pub fn parse_args() -> Result<Args, String> {
     Ok(Args {
         input_file,
         output_file,
+        log_dir,
         target_reg,
         verbose,
         trace,

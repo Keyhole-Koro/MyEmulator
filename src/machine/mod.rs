@@ -23,6 +23,8 @@ pub struct Machine {
 
     registers: [u32; 8],
     verbose: bool,
+    serial_log: Option<File>,
+    trace_log: Option<File>,
 
     stack_pointer: u32,
     base_pointer: u32,
@@ -44,6 +46,8 @@ impl Machine {
             io: HashMap::new(),
             registers: [0; 8],
             verbose,
+            serial_log: None,
+            trace_log: None,
             stack_pointer: RAM_END_EXCLUSIVE,
             base_pointer: 0,
             program_counter: RAM_START,
@@ -59,6 +63,22 @@ impl Machine {
 
     pub fn set_instruction_pointer(&mut self, address: u32) {
         self.program_counter = address;
+    }
+
+    pub fn set_serial_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
+        let path_ref = path.as_ref();
+        self.serial_log = Some(File::create(path_ref).map_err(|e| {
+            format!("Unable to open serial log {}: {}", path_ref.display(), e)
+        })?);
+        Ok(())
+    }
+
+    pub fn set_trace_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
+        let path_ref = path.as_ref();
+        self.trace_log = Some(File::create(path_ref).map_err(|e| {
+            format!("Unable to open trace log {}: {}", path_ref.display(), e)
+        })?);
+        Ok(())
     }
 
     pub fn get_data_register(&self, index: usize) -> Result<u32, String> {
@@ -133,7 +153,7 @@ impl Machine {
             if self.verbose || options.trace {
                 let inst = decode_instruction(instruction);
                 println!("------------------------------");
-                println!(
+                let trace_line = format!(
                     "PC: 0x{:08X}, Instruction: 0x{:08X}, {} r1=0x{:X} r2=0x{:X} imm=0x{:X}",
                     current_pc,
                     instruction,
@@ -142,6 +162,12 @@ impl Machine {
                     inst.reg2,
                     inst.imm
                 );
+                println!("{}", trace_line);
+                if let Some(trace_log) = self.trace_log.as_mut() {
+                    writeln!(trace_log, "------------------------------")
+                        .map_err(|e| e.to_string())?;
+                    writeln!(trace_log, "{}", trace_line).map_err(|e| e.to_string())?;
+                }
             }
 
             self.execute_instruction(instruction)?;
@@ -251,18 +277,24 @@ impl Machine {
     }
 
     pub fn print_registers(&self) {
+        print!("{}", self.register_report_hex());
+    }
+
+    pub fn register_report_hex(&self) -> String {
+        let mut report = String::new();
         for i in 0..=7 {
-            println!("R{}: 0x{:08X}", i, self.registers[i]);
+            report.push_str(&format!("R{}: 0x{:08X}\n", i, self.registers[i]));
         }
-        println!("SP: 0x{:08X}", self.stack_pointer);
-        println!("BP: 0x{:08X}", self.base_pointer);
-        println!("PC: 0x{:08X}", self.program_counter);
-        println!("SR: 0x{:08X}", self.status_register);
-        println!("LR: 0x{:08X}", self.link_register);
-        println!(
-            "FLAGS: C={} Z={} S={} O={}",
+        report.push_str(&format!("SP: 0x{:08X}\n", self.stack_pointer));
+        report.push_str(&format!("BP: 0x{:08X}\n", self.base_pointer));
+        report.push_str(&format!("PC: 0x{:08X}\n", self.program_counter));
+        report.push_str(&format!("SR: 0x{:08X}\n", self.status_register));
+        report.push_str(&format!("LR: 0x{:08X}\n", self.link_register));
+        report.push_str(&format!(
+            "FLAGS: C={} Z={} S={} O={}\n",
             self.carry_flag, self.zero_flag, self.sign_flag, self.overflow_flag
-        );
+        ));
+        report
     }
 
     fn get_register(&self, reg: u8) -> Result<u32, String> {

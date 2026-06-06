@@ -16,6 +16,10 @@ impl Machine {
             if address == SERIAL_TX_ADDR {
                 let ch = (value & 0xFF) as u8;
                 print!("{}", char::from(ch));
+                if let Some(serial_log) = self.serial_log.as_mut() {
+                    let _ = serial_log.write_all(&[ch]);
+                    let _ = serial_log.flush();
+                }
                 if ch == b'\n' {
                     let _ = io::stdout().flush();
                 }
@@ -48,6 +52,10 @@ impl Machine {
             self.io.insert(address, value as u32);
             if address == SERIAL_TX_ADDR {
                 print!("{}", char::from(value));
+                if let Some(serial_log) = self.serial_log.as_mut() {
+                    let _ = serial_log.write_all(&[value]);
+                    let _ = serial_log.flush();
+                }
                 if value == b'\n' {
                     let _ = io::stdout().flush();
                 }

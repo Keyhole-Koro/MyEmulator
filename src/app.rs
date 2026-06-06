@@ -1,6 +1,7 @@
 use crate::cli::parse_args;
 use crate::loader::read_binary_file;
 use crate::machine::{DebugOptions, Machine};
+use std::path::PathBuf;
 
 pub fn run() -> Result<(), String> {
     let args = parse_args()?;
@@ -9,6 +10,17 @@ pub fn run() -> Result<(), String> {
     let binary = read_binary_file(&args.input_file)?;
 
     let mut machine = Machine::new(args.verbose);
+    let log_dir = if args.log_dir.is_empty() {
+        None
+    } else {
+        let dir = PathBuf::from(&args.log_dir);
+        std::fs::create_dir_all(dir.join("memory"))
+            .map_err(|e| format!("Failed to create log directory {}: {}", dir.display(), e))?;
+        machine.set_serial_log(dir.join("serial.txt"))?;
+        machine.set_trace_log(dir.join("trace.log"))?;
+        Some(dir)
+    };
+
     let start_address = 0x0000_0000;
     machine.load_program(&binary, start_address);
     machine.set_instruction_pointer(start_address);
@@ -62,6 +74,16 @@ pub fn run() -> Result<(), String> {
         let dump_file = "memory_dump.txt";
         machine.dump_memory_text(dump_file, 0x0000_0000, 0x0000_FFFF)?;
         println!("Memory dump written to {}", dump_file);
+    }
+
+    if let Some(dir) = &log_dir {
+        machine.dump_memory_text(
+            dir.join("memory").join("final-00000000-0000ffff.txt"),
+            0x0000_0000,
+            0x0000_FFFF,
+        )?;
+        std::fs::write(dir.join("registers-hex.txt"), machine.register_report_hex())
+            .map_err(|e| format!("Failed to write register log in {}: {}", dir.display(), e))?;
     }
 
     if args.output_file.is_empty() && !debug_mode {
