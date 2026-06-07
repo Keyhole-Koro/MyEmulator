@@ -131,6 +131,7 @@ impl Machine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn execute(&mut self) -> Result<(), String> {
         self.execute_with_debug(DebugOptions::default())
     }
