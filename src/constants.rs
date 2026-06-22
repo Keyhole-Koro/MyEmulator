@@ -9,6 +9,14 @@ pub const SERIAL_TX_ADDR: u32 = IO_BASE;
 pub const SERIAL_LSR_ADDR: u32 = IO_BASE + 0x05;
 pub const SERIAL_LSR_THRE: u32 = 0x20;
 
+// Single fixed IRQ vector slot inside the I/O region. The kernel stores the
+// address of its interrupt handler here; on a timer interrupt the CPU reads it
+// to find where to jump. Living in I/O space keeps it isolated from RAM/heap.
+pub const IRQ_VECTOR_ADDR: u32 = IO_BASE + 0x80;
+
+// Status register interrupt-enable bit.
+pub const SR_IE: u32 = 0x1;
+
 pub fn is_ram_address(address: u32) -> bool {
     address >= RAM_START && address < RAM_END_EXCLUSIVE
 }

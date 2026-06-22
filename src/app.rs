@@ -33,6 +33,7 @@ pub fn run() -> Result<(), String> {
         trace: args.trace,
         break_addr: args.break_addr,
         step_count: args.step_count,
+        timer_interval: args.timer_interval,
     })?;
 
     if !debug_mode {

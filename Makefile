@@ -11,7 +11,7 @@ STEP ?=
 MEM_ADDR ?=
 MEM_LEN ?=
 
-RUST_SOURCES := $(wildcard src/*.rs)
+RUST_SOURCES := $(shell find src -name '*.rs')
 
 all: $(TARGET)
 

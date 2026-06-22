@@ -77,6 +77,9 @@ pub fn mnemonic(opcode: u8) -> &'static str {
         0x16 => "IN",
         0x17 => "OUT",
         0x1A => "DEBUG",
+        0x1E => "EI",
+        0x1F => "DI",
+        0x20 => "IRET",
         0x3F => "HALT",
         _ => "UNKNOWN",
     }

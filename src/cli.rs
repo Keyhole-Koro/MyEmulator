@@ -11,6 +11,7 @@ pub struct Args {
     pub step_count: Option<u64>,
     pub print_regs: bool,
     pub mem_range: Option<(u32, u32)>,
+    pub timer_interval: Option<u64>,
 }
 
 fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
@@ -46,6 +47,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut step_count = None;
     let mut print_regs = false;
     let mut mem_range = None;
+    let mut timer_interval = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -90,6 +92,12 @@ pub fn parse_args() -> Result<Args, String> {
             "--regs" => {
                 print_regs = true;
             }
+            "--timer-interval" => {
+                let raw = args
+                    .next()
+                    .ok_or_else(|| "--timer-interval requires a count like 1000".to_string())?;
+                timer_interval = Some(parse_u64_value(&raw, "--timer-interval")?);
+            }
             "--mem" => {
                 let start_raw = args
                     .next()
@@ -123,5 +131,6 @@ pub fn parse_args() -> Result<Args, String> {
         step_count,
         print_regs,
         mem_range,
+        timer_interval,
     })
 }

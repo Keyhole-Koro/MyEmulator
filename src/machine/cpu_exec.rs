@@ -1,7 +1,4 @@
-use std::fs::File;
-use std::io::Write;
-
-use crate::constants::IO_BASE;
+use crate::constants::{IO_BASE, SR_IE};
 use crate::instruction::{add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26};
 
 use super::Machine;
@@ -190,6 +187,20 @@ impl Machine {
                 let value = self.get_register(inst.reg1)?;
                 self.bus_write(IO_BASE.wrapping_add(inst.imm), value);
             }
+            0x1E => {
+                self.set_interrupt_enable(true);
+            }
+            0x1F => {
+                self.set_interrupt_enable(false);
+            }
+            0x20 => {
+                // Reverse of the interrupt entry push order (PC then SR).
+                let sr = self.pop()?;
+                self.program_counter = self.pop()?;
+                // Restoring SR also restores the interrupt-enable state, so the
+                // resumed code regains the IE it had when interrupted.
+                self.set_interrupt_enable((sr & SR_IE) != 0);
+            }
             0x3F => {
                 self.halted = true;
             }
@@ -198,40 +209,6 @@ impl Machine {
             }
         }
 
-        Ok(())
-    }
-
-    fn debug_dump(&self) -> Result<(), String> {
-        for i in 0..8 {
-            println!("reg{}: 0x{:x}", i, self.registers[i]);
-        }
-        println!("PC: 0x{:x}", self.program_counter);
-        println!("SP: 0x{:x}", self.stack_pointer);
-        println!("BP: 0x{:x}", self.base_pointer);
-        println!("SR: 0x{:x}", self.status_register);
-        println!("LR: 0x{:x}", self.link_register);
-        println!(
-            "Flags: Zero: {}, Carry: {}, Sign: {}, Overflow: {}",
-            self.zero_flag, self.carry_flag, self.sign_flag, self.overflow_flag
-        );
-
-        let filename = format!("memory_dump{}.txt", self.program_counter);
-        let mut out = File::create(&filename)
-            .map_err(|e| format!("Unable to open file {} for writing: {}", filename, e))?;
-
-        let end_address: u32 = 0x0200_0000;
-        let start_address: u32 = 0x2000_0000u32.wrapping_sub(0x0000_1000);
-        let mut address = start_address;
-        while address <= end_address {
-            let value = self.bus_read(address);
-            writeln!(out, "0x{:x}: 0x{:08x}", address, value).map_err(|e| e.to_string())?;
-            if end_address - address < 4 {
-                break;
-            }
-            address = address.wrapping_add(4);
-        }
-
-        println!("Memory dump written to {}", filename);
         Ok(())
     }
 }
