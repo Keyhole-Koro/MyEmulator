@@ -6,8 +6,10 @@ pub const IO_BASE: u32 = 0x2400_0000;
 pub const IO_END_INCLUSIVE: u32 = 0x2400_00FF;
 
 pub const SERIAL_TX_ADDR: u32 = IO_BASE;
+pub const SERIAL_RX_ADDR: u32 = IO_BASE + 0x04; // receiver buffer (read consumes a byte)
 pub const SERIAL_LSR_ADDR: u32 = IO_BASE + 0x05;
-pub const SERIAL_LSR_THRE: u32 = 0x20;
+pub const SERIAL_LSR_THRE: u32 = 0x20; // transmit holding register empty
+pub const SERIAL_LSR_DR: u32 = 0x01; // data ready (a received byte is waiting)
 
 // Single fixed IRQ vector slot inside the I/O region. The kernel stores the
 // address of its interrupt handler here; on a timer interrupt the CPU reads it

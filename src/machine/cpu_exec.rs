@@ -41,7 +41,7 @@ impl Machine {
             }
             0x03 => {
                 let addr = self.get_register(inst.reg2)?;
-                let value = self.bus_read(addr);
+                let value = self.bus_load(addr);
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
@@ -52,7 +52,7 @@ impl Machine {
             }
             0x1C => {
                 let addr = self.get_register(inst.reg2)?;
-                let value = self.bus_read_byte(addr) as u32;
+                let value = self.bus_load_byte(addr) as u32;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
@@ -179,7 +179,7 @@ impl Machine {
                 self.update_zero_flag(value);
             }
             0x16 => {
-                let value = self.bus_read(IO_BASE.wrapping_add(inst.imm));
+                let value = self.bus_load(IO_BASE.wrapping_add(inst.imm));
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }

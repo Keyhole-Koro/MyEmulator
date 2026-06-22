@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fs::File;
+use std::sync::mpsc::Receiver;
 
 use crate::constants::{RAM_END_EXCLUSIVE, RAM_START};
 
@@ -47,6 +49,11 @@ pub struct Machine {
     pending_irq: bool,
     timer_counter: u64,
     timer_interval: Option<u64>,
+
+    // Serial input: a background thread reads stdin into this queue; arrivals
+    // raise an IRQ. Reading SERIAL_RX_ADDR consumes from the front.
+    rx_queue: VecDeque<u8>,
+    rx_recv: Option<Receiver<u8>>,
 }
 
 impl Machine {
@@ -72,6 +79,8 @@ impl Machine {
             pending_irq: false,
             timer_counter: 0,
             timer_interval: None,
+            rx_queue: VecDeque::new(),
+            rx_recv: None,
         }
     }
 }

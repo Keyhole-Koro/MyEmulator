@@ -23,6 +23,7 @@ impl Machine {
 
     pub fn execute_with_debug(&mut self, options: DebugOptions) -> Result<(), String> {
         self.timer_interval = options.timer_interval;
+        self.start_serial_input();
 
         let mut executed_steps = 0u64;
         while !self.halted {
