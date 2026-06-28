@@ -1,10 +1,35 @@
 use std::io::Write;
+use std::time::{Duration, Instant};
 
 use crate::instruction::{decode_instruction, mnemonic};
+use crate::constants::{DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_REFRESH_HZ};
 
 use super::{DebugOptions, Machine};
 
 impl Machine {
+    // Scan VRAM out to the window if at least one refresh interval has elapsed
+    // since the last frame. Mirrors a hardware display controller refreshing at
+    // a fixed rate independent of CPU speed. Returns false if the window was
+    // closed (the caller should halt). No-op in headless mode.
+    fn maybe_refresh_display(&mut self, force: bool) -> bool {
+        if self.headless {
+            return true;
+        }
+        let interval = Duration::from_nanos(1_000_000_000 / DISPLAY_REFRESH_HZ);
+        if !force && self.last_frame.elapsed() < interval {
+            return true;
+        }
+        if let Some(window) = &mut self.window {
+            if !window.is_open() {
+                return false;
+            }
+            window
+                .update_with_buffer(&self.vram, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+                .unwrap();
+            self.last_frame = Instant::now();
+        }
+        true
+    }
     pub fn set_instruction_pointer(&mut self, address: u32) {
         self.program_counter = address;
     }
@@ -64,6 +89,10 @@ impl Machine {
             self.execute_instruction(instruction)?;
             executed_steps = executed_steps.wrapping_add(1);
 
+            if !self.maybe_refresh_display(false) {
+                self.halted = true;
+            }
+
             if let Some(step_limit) = options.step_count {
                 if executed_steps >= step_limit {
                     println!("[STEP] paused after {} instruction(s)", executed_steps);
@@ -72,6 +101,10 @@ impl Machine {
                 }
             }
         }
+
+        // Force one final scan-out so the last frame is shown even if the loop
+        // ended before the next refresh interval.
+        self.maybe_refresh_display(true);
         Ok(())
     }
 }

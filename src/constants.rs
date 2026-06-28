@@ -2,6 +2,19 @@ pub const RAM_START: u32 = 0x0000_0000;
 pub const RAM_SIZE: u32 = 0x2000_0000; // 512 MB
 pub const RAM_END_EXCLUSIVE: u32 = RAM_START.wrapping_add(RAM_SIZE);
 
+pub const VRAM_BASE: u32 = 0x3000_0000;
+pub const DISPLAY_WIDTH: usize = 320;
+pub const DISPLAY_HEIGHT: usize = 240;
+pub const VRAM_SIZE: u32 = (DISPLAY_WIDTH * DISPLAY_HEIGHT * 4) as u32;
+pub const VRAM_END_EXCLUSIVE: u32 = VRAM_BASE + VRAM_SIZE;
+
+// Display refresh rate of the emulated display controller (~60 Hz).
+pub const DISPLAY_REFRESH_HZ: u64 = 60;
+
+pub fn is_vram_address(address: u32) -> bool {
+    address >= VRAM_BASE && address < VRAM_END_EXCLUSIVE
+}
+
 pub const IO_BASE: u32 = 0x2400_0000;
 pub const IO_END_INCLUSIVE: u32 = 0x2400_00FF;
 

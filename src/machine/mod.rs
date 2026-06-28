@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::sync::mpsc::Receiver;
+use std::time::Instant;
+use minifb::{Window, WindowOptions};
 
-use crate::constants::{RAM_END_EXCLUSIVE, RAM_START};
+use crate::constants::{RAM_END_EXCLUSIVE, RAM_START, DISPLAY_WIDTH, DISPLAY_HEIGHT, VRAM_SIZE};
 
 mod cpu_exec;
 mod diagnostics;
@@ -26,6 +28,15 @@ pub struct Machine {
     // Sparse byte-addressed RAM keeps behavior while avoiding eager 512MB allocation.
     ram: HashMap<u32, u8>,
     io: HashMap<u32, u32>,
+    vram: Vec<u32>,
+
+    window: Option<Window>,
+    headless: bool,
+    // Wall-clock time the display was last scanned out to the window. The
+    // hardware display controller refreshes VRAM at a fixed rate regardless of
+    // how many instructions the CPU has executed, so we drive updates off real
+    // time rather than instruction counts.
+    last_frame: Instant,
 
     registers: [u32; 8],
     verbose: bool,
@@ -57,10 +68,32 @@ pub struct Machine {
 }
 
 impl Machine {
-    pub fn new(verbose: bool) -> Self {
+    pub fn new(verbose: bool, headless: bool) -> Self {
+        let window = if !headless {
+            let win = Window::new(
+                "MyEmulator Display",
+                DISPLAY_WIDTH,
+                DISPLAY_HEIGHT,
+                WindowOptions::default(),
+            ).unwrap_or_else(|e| {
+                panic!("{}", e);
+            });
+            // We gate scan-out ourselves on wall-clock time (see
+            // maybe_refresh_display), so minifb's own rate limiter is left at
+            // its default (off) to avoid blocking the CPU thread inside
+            // update_with_buffer.
+            Some(win)
+        } else {
+            None
+        };
+
         Self {
             ram: HashMap::new(),
             io: HashMap::new(),
+            vram: vec![0; (VRAM_SIZE / 4) as usize],
+            window,
+            headless,
+            last_frame: Instant::now(),
             registers: [0; 8],
             verbose,
             serial_log: None,
