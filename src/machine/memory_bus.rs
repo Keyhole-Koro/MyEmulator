@@ -1,7 +1,8 @@
 use std::io::{self, Write};
 
 use crate::constants::{
-    is_io_address, is_ram_address, SERIAL_LSR_ADDR, SERIAL_LSR_DR, SERIAL_LSR_THRE, SERIAL_RX_ADDR,
+    is_io_address, is_ram_address, is_vram_address, VRAM_BASE,
+    SERIAL_LSR_ADDR, SERIAL_LSR_DR, SERIAL_LSR_THRE, SERIAL_RX_ADDR,
     SERIAL_TX_ADDR,
 };
 
@@ -39,6 +40,14 @@ impl Machine {
             return;
         }
 
+        if is_vram_address(address) {
+            let offset = (address - VRAM_BASE) as usize / 4;
+            if offset < self.vram.len() {
+                self.vram[offset] = value;
+            }
+            return;
+        }
+
         if is_io_address(address) {
             self.io.insert(address, value);
             if address == SERIAL_TX_ADDR {
@@ -60,6 +69,14 @@ impl Machine {
             return self.ram_read_word(address);
         }
 
+        if is_vram_address(address) {
+            let offset = (address - VRAM_BASE) as usize / 4;
+            if offset < self.vram.len() {
+                return self.vram[offset];
+            }
+            return 0;
+        }
+
         if is_io_address(address) {
             if address == SERIAL_LSR_ADDR {
                 return self.serial_lsr();
@@ -73,6 +90,18 @@ impl Machine {
     pub(super) fn bus_write_byte(&mut self, address: u32, value: u8) {
         if is_ram_address(address) {
             self.ram.insert(address, value);
+            return;
+        }
+
+        if is_vram_address(address) {
+            let offset = (address - VRAM_BASE) as usize;
+            let word_index = offset / 4;
+            if word_index < self.vram.len() {
+                let byte_shift = (3 - (offset % 4)) * 8; // big-endian
+                let mask = !(0xFF << byte_shift);
+                let current = self.vram[word_index];
+                self.vram[word_index] = (current & mask) | ((value as u32) << byte_shift);
+            }
             return;
         }
 
@@ -94,6 +123,16 @@ impl Machine {
     pub(super) fn bus_read_byte(&self, address: u32) -> u8 {
         if is_ram_address(address) {
             return *self.ram.get(&address).unwrap_or(&0);
+        }
+
+        if is_vram_address(address) {
+            let offset = (address - VRAM_BASE) as usize;
+            let word_index = offset / 4;
+            if word_index < self.vram.len() {
+                let byte_shift = (3 - (offset % 4)) * 8; // big-endian
+                return ((self.vram[word_index] >> byte_shift) & 0xFF) as u8;
+            }
+            return 0;
         }
 
         if is_io_address(address) {

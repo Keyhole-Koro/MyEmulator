@@ -12,6 +12,7 @@ pub struct Args {
     pub print_regs: bool,
     pub mem_range: Option<(u32, u32)>,
     pub timer_interval: Option<u64>,
+    pub headless: bool,
 }
 
 fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
@@ -48,6 +49,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut print_regs = false;
     let mut mem_range = None;
     let mut timer_interval = None;
+    let mut headless = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -110,6 +112,9 @@ pub fn parse_args() -> Result<Args, String> {
                     parse_u32_value(&len_raw, "--mem")?,
                 ));
             }
+            "--headless" => {
+                headless = true;
+            }
             _ => {
                 return Err(format!("Unknown option: {}", arg));
             }
@@ -132,5 +137,6 @@ pub fn parse_args() -> Result<Args, String> {
         print_regs,
         mem_range,
         timer_interval,
+        headless,
     })
 }

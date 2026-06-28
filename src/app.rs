@@ -9,7 +9,7 @@ pub fn run() -> Result<(), String> {
     println!("Loading binary from {}", args.input_file);
     let binary = read_binary_file(&args.input_file)?;
 
-    let mut machine = Machine::new(args.verbose);
+    let mut machine = Machine::new(args.verbose, args.headless);
     let log_dir = if args.log_dir.is_empty() {
         None
     } else {
