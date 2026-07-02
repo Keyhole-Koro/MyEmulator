@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn lsr_idle_reports_thre_only() {
-        let m = Machine::new(false);
+        let m = Machine::new(false, true);
         // No input queued: transmitter ready, no data-ready bit.
         assert_eq!(m.bus_read(SERIAL_LSR_ADDR), SERIAL_LSR_THRE);
         assert_eq!(m.bus_read(SERIAL_LSR_ADDR) & SERIAL_LSR_DR, 0);
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn rx_register_consumes_fifo_in_order() {
-        let mut m = Machine::new(false);
+        let mut m = Machine::new(false, true);
         m.ingest_serial_bytes(b"AB");
         assert_ne!(
             m.bus_read(SERIAL_LSR_ADDR) & SERIAL_LSR_DR,
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn received_input_raises_pending_irq() {
-        let mut m = Machine::new(false);
+        let mut m = Machine::new(false, true);
         assert!(!m.pending_irq);
         m.ingest_serial_bytes(b"x");
         assert!(m.pending_irq);
@@ -148,7 +148,7 @@ mod tests {
     fn rx_does_not_disturb_instruction_fetch() {
         // bus_read (used for fetch/stack) must NOT consume the RX byte; only the
         // LD instructions (bus_load) do.
-        let mut m = Machine::new(false);
+        let mut m = Machine::new(false, true);
         m.ingest_serial_bytes(b"Z");
         let _ = m.bus_read(SERIAL_RX_ADDR);
         assert_eq!(m.bus_load(SERIAL_RX_ADDR), u32::from(b'Z'), "byte still there");
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn received_input_vectors_to_handler_when_enabled() {
-        let mut m = Machine::new(false);
+        let mut m = Machine::new(false, true);
         let handler = 0x0000_0100u32; // a RAM address
         m.bus_write(IRQ_VECTOR_ADDR, handler);
         m.set_interrupt_enable(true);
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn no_input_does_not_interrupt() {
-        let mut m = Machine::new(false);
+        let mut m = Machine::new(false, true);
         m.bus_write(IRQ_VECTOR_ADDR, 0x0000_0100);
         m.set_interrupt_enable(true);
         m.service_timer_interrupt().unwrap();
