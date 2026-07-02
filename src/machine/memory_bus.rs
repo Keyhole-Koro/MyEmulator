@@ -4,6 +4,7 @@ use crate::constants::{
     is_io_address, is_ram_address, is_vram_address, VRAM_BASE,
     SERIAL_LSR_ADDR, SERIAL_LSR_DR, SERIAL_LSR_THRE, SERIAL_RX_ADDR,
     SERIAL_TX_ADDR,
+    SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR,
 };
 
 use super::Machine;
@@ -49,6 +50,21 @@ impl Machine {
         }
 
         if is_io_address(address) {
+            match address {
+                SSD_BLOCK_ADDR => {
+                    self.ssd.set_block(value);
+                    return;
+                }
+                SSD_ADDR_ADDR => {
+                    self.ssd.set_addr(value);
+                    return;
+                }
+                SSD_CMD_ADDR => {
+                    self.service_ssd_dma(value);
+                    return;
+                }
+                _ => {}
+            }
             self.io.insert(address, value);
             if address == SERIAL_TX_ADDR {
                 let ch = (value & 0xFF) as u8;
@@ -80,6 +96,9 @@ impl Machine {
         if is_io_address(address) {
             if address == SERIAL_LSR_ADDR {
                 return self.serial_lsr();
+            }
+            if address == SSD_STATUS_ADDR {
+                return self.ssd.status();
             }
             return *self.io.get(&address).unwrap_or(&0xFFFF_FFFF);
         }

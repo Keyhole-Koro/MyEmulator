@@ -10,6 +10,10 @@ pub fn run() -> Result<(), String> {
     let binary = read_binary_file(&args.input_file)?;
 
     let mut machine = Machine::new(args.verbose, args.headless);
+    if let Some(disk) = &args.disk_file {
+        machine.load_disk(PathBuf::from(disk))?;
+        println!("Mounted disk image {}", disk);
+    }
     let log_dir = if args.log_dir.is_empty() {
         None
     } else {

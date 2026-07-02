@@ -13,7 +13,10 @@ mod interrupts;
 mod memory_bus;
 mod registers;
 mod run_loop;
+mod ssd;
 mod stack;
+
+use ssd::SsdDevice;
 
 #[derive(Clone, Copy, Default)]
 pub struct DebugOptions {
@@ -65,6 +68,8 @@ pub struct Machine {
     // raise an IRQ. Reading SERIAL_RX_ADDR consumes from the front.
     rx_queue: VecDeque<u8>,
     rx_recv: Option<Receiver<u8>>,
+
+    ssd: SsdDevice,
 }
 
 impl Machine {
@@ -114,6 +119,13 @@ impl Machine {
             timer_interval: None,
             rx_queue: VecDeque::new(),
             rx_recv: None,
+            ssd: SsdDevice::disabled(),
         }
+    }
+
+    // Attach a host disk-image file as the SSD's backing store.
+    pub fn load_disk(&mut self, path: std::path::PathBuf) -> Result<(), String> {
+        self.ssd = SsdDevice::load(path)?;
+        Ok(())
     }
 }
