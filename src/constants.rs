@@ -39,6 +39,13 @@ pub const SSD_BLOCK_SIZE: usize = 65536;
 pub const SSD_BLOCK_COUNT: usize = 16384;
 pub const SSD_DISK_SIZE: usize = SSD_BLOCK_SIZE * SSD_BLOCK_COUNT; // 1 GB
 
+pub const DMA2D_DEST_ADDR: u32 = IO_BASE + 0x20;
+pub const DMA2D_COLOR_ADDR: u32 = IO_BASE + 0x24;
+pub const DMA2D_WIDTH_ADDR: u32 = IO_BASE + 0x28;
+pub const DMA2D_HEIGHT_ADDR: u32 = IO_BASE + 0x2C;
+pub const DMA2D_STRIDE_ADDR: u32 = IO_BASE + 0x30;
+pub const DMA2D_CMD_ADDR: u32 = IO_BASE + 0x34; // W: 1 = fill_rect
+
 // Single fixed IRQ vector slot inside the I/O region. The kernel stores the
 // address of its interrupt handler here; on a timer interrupt the CPU reads it
 // to find where to jump. Living in I/O space keeps it isolated from RAM/heap.

@@ -51,6 +51,12 @@ impl Machine {
         self.start_serial_input();
 
         let mut executed_steps = 0u64;
+        // Throttle expensive per-tick work (syscalls, serial polling, display
+        // refresh) to once every BATCH_SIZE instructions. Checking the clock
+        // and polling the serial channel on every single instruction was the
+        // dominant bottleneck.
+        const BATCH_SIZE: u64 = 1_000;
+        let mut batch_counter: u64 = 0;
         while !self.halted {
             let current_pc = self.program_counter;
             if let Some(break_addr) = options.break_addr {
@@ -61,7 +67,17 @@ impl Machine {
                 }
             }
 
-            self.service_timer_interrupt()?;
+            // Only service timer/serial and refresh display every BATCH_SIZE
+            // instructions to avoid per-instruction syscall overhead.
+            batch_counter += 1;
+            if batch_counter >= BATCH_SIZE {
+                batch_counter = 0;
+                self.service_timer_interrupt()?;
+                if !self.maybe_refresh_display(false) {
+                    self.halted = true;
+                    break;
+                }
+            }
 
             let instruction = self.bus_read(self.program_counter);
             self.program_counter = self.program_counter.wrapping_add(4);
@@ -88,10 +104,6 @@ impl Machine {
 
             self.execute_instruction(instruction)?;
             executed_steps = executed_steps.wrapping_add(1);
-
-            if !self.maybe_refresh_display(false) {
-                self.halted = true;
-            }
 
             if let Some(step_limit) = options.step_count {
                 if executed_steps >= step_limit {

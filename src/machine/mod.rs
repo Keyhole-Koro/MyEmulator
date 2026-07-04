@@ -5,7 +5,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Instant;
 use minifb::{Window, WindowOptions};
 
-use crate::constants::{RAM_END_EXCLUSIVE, RAM_START, DISPLAY_WIDTH, DISPLAY_HEIGHT, VRAM_SIZE};
+use crate::constants::{RAM_END_EXCLUSIVE, RAM_SIZE, RAM_START, DISPLAY_WIDTH, DISPLAY_HEIGHT, VRAM_SIZE};
 
 mod cpu_exec;
 mod diagnostics;
@@ -29,7 +29,7 @@ pub struct DebugOptions {
 
 pub struct Machine {
     // Sparse byte-addressed RAM keeps behavior while avoiding eager 512MB allocation.
-    ram: HashMap<u32, u8>,
+    ram: Vec<u8>,
     io: HashMap<u32, u32>,
     vram: Vec<u32>,
 
@@ -93,7 +93,7 @@ impl Machine {
         };
 
         Self {
-            ram: HashMap::new(),
+            ram: vec![0u8; RAM_SIZE as usize],
             io: HashMap::new(),
             vram: vec![0; (VRAM_SIZE / 4) as usize],
             window,

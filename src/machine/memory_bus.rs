@@ -63,6 +63,10 @@ impl Machine {
                     self.service_ssd_dma(value);
                     return;
                 }
+                crate::constants::DMA2D_CMD_ADDR => {
+                    self.service_dma2d(value);
+                    return;
+                }
                 _ => {}
             }
             self.io.insert(address, value);
@@ -108,7 +112,7 @@ impl Machine {
 
     pub(super) fn bus_write_byte(&mut self, address: u32, value: u8) {
         if is_ram_address(address) {
-            self.ram.insert(address, value);
+            self.ram[address as usize] = value;
             return;
         }
 
@@ -141,7 +145,7 @@ impl Machine {
 
     pub(super) fn bus_read_byte(&self, address: u32) -> u8 {
         if is_ram_address(address) {
-            return *self.ram.get(&address).unwrap_or(&0);
+            return self.ram[address as usize];
         }
 
         if is_vram_address(address) {
@@ -167,23 +171,41 @@ impl Machine {
     }
 
     pub(super) fn ram_read_word(&self, address: u32) -> u32 {
-        let b0 = *self.ram.get(&address).unwrap_or(&0) as u32;
-        let b1 = *self.ram.get(&address.wrapping_add(1)).unwrap_or(&0) as u32;
-        let b2 = *self.ram.get(&address.wrapping_add(2)).unwrap_or(&0) as u32;
-        let b3 = *self.ram.get(&address.wrapping_add(3)).unwrap_or(&0) as u32;
-        (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+        let i = address as usize;
+        let b = &self.ram[i..i + 4];
+        u32::from_be_bytes([b[0], b[1], b[2], b[3]])
     }
 
     pub(super) fn ram_write_word(&mut self, address: u32, value: u32) {
-        self.ram.insert(address, ((value >> 24) & 0xFF) as u8);
-        self.ram
-            .insert(address.wrapping_add(1), ((value >> 16) & 0xFF) as u8);
-        self.ram
-            .insert(address.wrapping_add(2), ((value >> 8) & 0xFF) as u8);
-        self.ram.insert(address.wrapping_add(3), (value & 0xFF) as u8);
+        let i = address as usize;
+        let bytes = value.to_be_bytes();
+        self.ram[i..i + 4].copy_from_slice(&bytes);
     }
 
     pub(super) fn read_stack_memory(&self, address: u32) -> u32 {
         self.bus_read(address)
+    }
+
+    fn service_dma2d(&mut self, cmd: u32) {
+        if cmd == 1 {
+            let dest = *self.io.get(&crate::constants::DMA2D_DEST_ADDR).unwrap_or(&0);
+            let color = *self.io.get(&crate::constants::DMA2D_COLOR_ADDR).unwrap_or(&0);
+            let width = *self.io.get(&crate::constants::DMA2D_WIDTH_ADDR).unwrap_or(&0);
+            let height = *self.io.get(&crate::constants::DMA2D_HEIGHT_ADDR).unwrap_or(&0);
+            let stride = *self.io.get(&crate::constants::DMA2D_STRIDE_ADDR).unwrap_or(&(crate::constants::DISPLAY_WIDTH as u32));
+            
+            if dest >= crate::constants::VRAM_BASE {
+                let start_idx = (dest - crate::constants::VRAM_BASE) as usize / 4;
+                let w = width as usize;
+                let h = height as usize;
+                let s = stride as usize;
+                for y in 0..h {
+                    let row_start = start_idx + y * s;
+                    if row_start + w <= self.vram.len() {
+                        self.vram[row_start..row_start + w].fill(color);
+                    }
+                }
+            }
+        }
     }
 }
