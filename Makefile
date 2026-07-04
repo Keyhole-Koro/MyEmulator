@@ -1,7 +1,5 @@
 CARGO ?= cargo
-BUILD_DIR ?= build
-CARGO_TARGET_DIR ?= $(BUILD_DIR)/cargo-target
-TARGET ?= $(BUILD_DIR)/myemu
+TARGET = target/release/myemu
 
 IN ?= tests/outputs/sample.bin
 OUT ?=
@@ -16,11 +14,7 @@ RUST_SOURCES := $(shell find src -name '*.rs')
 all: $(TARGET)
 
 $(TARGET): Cargo.toml $(RUST_SOURCES)
-	mkdir -p $(BUILD_DIR)
-	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) $(CARGO) build --manifest-path Cargo.toml --release
-	cp $(CARGO_TARGET_DIR)/release/myemu $(TARGET).tmp
-	mv -f $(TARGET).tmp $(TARGET)
-	chmod +x $(TARGET)
+	$(CARGO) build --release
 
 run-myemu: $(TARGET)
 	@if [ -z "$(OUT)" ]; then \
@@ -64,7 +58,7 @@ gdb: $(TARGET)
 	gdb --args ./$(TARGET) $(ARGS)
 
 test:
-	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) $(CARGO) test --manifest-path Cargo.toml
+	$(CARGO) test
 
 clean:
-	rm -rf $(BUILD_DIR)
+	$(CARGO) clean
