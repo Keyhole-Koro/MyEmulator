@@ -3,8 +3,8 @@ pub const RAM_SIZE: u32 = 0x2000_0000; // 512 MB
 pub const RAM_END_EXCLUSIVE: u32 = RAM_START.wrapping_add(RAM_SIZE);
 
 pub const VRAM_BASE: u32 = 0x3000_0000;
-pub const DISPLAY_WIDTH: usize = 320;
-pub const DISPLAY_HEIGHT: usize = 240;
+pub const DISPLAY_WIDTH: usize = 1024;
+pub const DISPLAY_HEIGHT: usize = 768;
 pub const VRAM_SIZE: u32 = (DISPLAY_WIDTH * DISPLAY_HEIGHT * 4) as u32;
 pub const VRAM_END_EXCLUSIVE: u32 = VRAM_BASE + VRAM_SIZE;
 
