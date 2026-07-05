@@ -11,12 +11,18 @@ mod cpu_exec;
 mod diagnostics;
 mod interrupts;
 mod memory_bus;
+mod mouse;
 mod registers;
 mod run_loop;
+mod serial;
 mod ssd;
 mod stack;
+mod timer;
 
+use mouse::MouseDevice;
+use serial::SerialDevice;
 use ssd::SsdDevice;
+use timer::TimerDevice;
 
 #[derive(Clone, Copy, Default)]
 pub struct DebugOptions {
@@ -31,7 +37,13 @@ pub struct Machine {
     // Sparse byte-addressed RAM keeps behavior while avoiding eager 512MB allocation.
     ram: Vec<u8>,
     io: HashMap<u32, u32>,
+    // Back buffer: all VRAM writes (direct and DMA2D) land here.
     vram: Vec<u32>,
+    // Front buffer: what the display scans out. A DISPLAY_SWAP copies vram into
+    // this. Empty until the first swap, in which case the back buffer is shown
+    // directly (see maybe_refresh_display).
+    front: Vec<u32>,
+    swapped: bool,
 
     window: Option<Window>,
     headless: bool,
@@ -61,14 +73,11 @@ pub struct Machine {
     // Interrupt state.
     interrupt_enable: bool,
     pending_irq: bool,
-    timer_counter: u64,
-    timer_interval: Option<u64>,
-
-    // Serial input: a background thread reads stdin into this queue; arrivals
-    // raise an IRQ. Reading SERIAL_RX_ADDR consumes from the front.
-    rx_queue: VecDeque<u8>,
-    rx_recv: Option<Receiver<u8>>,
-
+    irq_cause: u32,
+    // Devices
+    serial: SerialDevice,
+    mouse: MouseDevice,
+    timer: TimerDevice,
     ssd: SsdDevice,
 }
 
@@ -96,6 +105,8 @@ impl Machine {
             ram: vec![0u8; RAM_SIZE as usize],
             io: HashMap::new(),
             vram: vec![0; (VRAM_SIZE / 4) as usize],
+            front: vec![0; (VRAM_SIZE / 4) as usize],
+            swapped: false,
             window,
             headless,
             last_frame: Instant::now(),
@@ -115,10 +126,10 @@ impl Machine {
             overflow_flag: false,
             interrupt_enable: false,
             pending_irq: false,
-            timer_counter: 0,
-            timer_interval: None,
-            rx_queue: VecDeque::new(),
-            rx_recv: None,
+            irq_cause: 0,
+            serial: SerialDevice::new(),
+            mouse: MouseDevice::new(),
+            timer: TimerDevice::new(),
             ssd: SsdDevice::disabled(),
         }
     }

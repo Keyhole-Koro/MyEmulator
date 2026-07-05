@@ -5,33 +5,27 @@ use crate::constants::{
     SERIAL_LSR_ADDR, SERIAL_LSR_DR, SERIAL_LSR_THRE, SERIAL_RX_ADDR,
     SERIAL_TX_ADDR,
     SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR,
+    IRQ_CAUSE_ADDR,
 };
 
 use super::Machine;
 
 impl Machine {
-    // Line status register: TX always ready; DR set while input is queued.
-    fn serial_lsr(&self) -> u32 {
-        let mut lsr = SERIAL_LSR_THRE;
-        if !self.rx_queue.is_empty() {
-            lsr |= SERIAL_LSR_DR;
-        }
-        lsr
-    }
+
 
     // Load used by the LD instructions. Reading the RX register consumes the
     // next received byte (a side effect, hence a &mut path distinct from
     // bus_read used for instruction fetch and stack access).
     pub(super) fn bus_load(&mut self, address: u32) -> u32 {
         if address == SERIAL_RX_ADDR {
-            return self.rx_queue.pop_front().map(u32::from).unwrap_or(0);
+            return self.serial.read_rx();
         }
         self.bus_read(address)
     }
 
     pub(super) fn bus_load_byte(&mut self, address: u32) -> u8 {
         if address == SERIAL_RX_ADDR {
-            return self.rx_queue.pop_front().unwrap_or(0);
+            return self.serial.read_rx() as u8;
         }
         self.bus_read_byte(address)
     }
@@ -67,6 +61,20 @@ impl Machine {
                     self.service_dma2d(value);
                     return;
                 }
+                crate::constants::DISPLAY_SWAP_ADDR => {
+                    if value == 1 {
+                        self.front.copy_from_slice(&self.vram);
+                        self.swapped = true;
+                    }
+                    return;
+                }
+                IRQ_CAUSE_ADDR => {
+                    self.irq_cause &= !value; // Ack (clear) the bits that are written as 1
+                    if self.irq_cause == 0 {
+                        self.pending_irq = false;
+                    }
+                    return;
+                }
                 _ => {}
             }
             self.io.insert(address, value);
@@ -98,11 +106,27 @@ impl Machine {
         }
 
         if is_io_address(address) {
-            if address == SERIAL_LSR_ADDR {
-                return self.serial_lsr();
-            }
+
             if address == SSD_STATUS_ADDR {
                 return self.ssd.status();
+            }
+            if address == IRQ_CAUSE_ADDR {
+                return self.irq_cause;
+            }
+            if address == crate::constants::MOUSE_X_ADDR {
+                return self.mouse.x;
+            }
+            if address == crate::constants::MOUSE_Y_ADDR {
+                return self.mouse.y;
+            }
+            if address == crate::constants::MOUSE_BUTTONS_ADDR {
+                return self.mouse.buttons;
+            }
+            if address == SERIAL_LSR_ADDR {
+                return self.serial.lsr();
+            }
+            if address == SERIAL_RX_ADDR {
+                return self.serial.peek_rx();
             }
             return *self.io.get(&address).unwrap_or(&0xFFFF_FFFF);
         }
@@ -160,7 +184,7 @@ impl Machine {
 
         if is_io_address(address) {
             let value = if address == SERIAL_LSR_ADDR {
-                self.serial_lsr()
+                self.serial.lsr()
             } else {
                 *self.io.get(&address).unwrap_or(&0xFFFF_FFFF)
             };

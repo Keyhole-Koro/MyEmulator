@@ -23,10 +23,30 @@ impl Machine {
             if !window.is_open() {
                 return false;
             }
+            // Scan out the front buffer once a program has swapped at least
+            // once; otherwise present the back buffer directly so programs that
+            // never double-buffer still show their drawing.
+            let scanout = if self.swapped { &self.front } else { &self.vram };
             window
-                .update_with_buffer(&self.vram, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+                .update_with_buffer(scanout, DISPLAY_WIDTH, DISPLAY_HEIGHT)
                 .unwrap();
             self.last_frame = Instant::now();
+
+            // Sample the host pointer. A change in position or button state
+            // raises an IRQ so the kernel handler can poll the mouse registers.
+            let (mx, my) = window
+                .get_mouse_pos(minifb::MouseMode::Clamp)
+                .unwrap_or((0.0, 0.0));
+            let (nx, ny) = (mx as u32, my as u32);
+            let buttons = if window.get_mouse_down(minifb::MouseButton::Left) {
+                crate::constants::MOUSE_BUTTON_LEFT
+            } else {
+                0
+            };
+            if self.mouse.update(nx, ny, buttons) {
+                self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
+                self.pending_irq = true;
+            }
         }
         true
     }
@@ -47,7 +67,7 @@ impl Machine {
     }
 
     pub fn execute_with_debug(&mut self, options: DebugOptions) -> Result<(), String> {
-        self.timer_interval = options.timer_interval;
+        self.timer.interval = options.timer_interval;
         self.start_serial_input();
 
         let mut executed_steps = 0u64;

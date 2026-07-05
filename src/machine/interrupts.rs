@@ -2,7 +2,10 @@ use std::io::Read;
 use std::sync::mpsc;
 use std::thread;
 
-use crate::constants::{is_ram_address, IRQ_VECTOR_ADDR, SR_IE};
+use crate::constants::{
+    is_ram_address, IRQ_VECTOR_ADDR, SR_IE, 
+    IRQ_CAUSE_TIMER, IRQ_CAUSE_SERIAL, IRQ_CAUSE_MOUSE
+};
 
 use super::Machine;
 
@@ -10,7 +13,7 @@ impl Machine {
     // Spawn a background thread that forwards stdin bytes to the RX queue.
     // Idempotent; safe to call before each run.
     pub(super) fn start_serial_input(&mut self) {
-        if self.rx_recv.is_some() {
+        if self.serial.has_rx_recv() {
             return;
         }
         let (tx, rx) = mpsc::channel::<u8>();
@@ -29,7 +32,7 @@ impl Machine {
                 }
             }
         });
-        self.rx_recv = Some(rx);
+        self.serial.set_rx_recv(rx);
     }
 
     // Queue received bytes and raise an IRQ so the kernel's handler runs
@@ -39,19 +42,28 @@ impl Machine {
         if bytes.is_empty() {
             return;
         }
-        self.rx_queue.extend(bytes.iter().copied());
+        self.serial.ingest_bytes(bytes);
+        self.irq_cause |= IRQ_CAUSE_SERIAL;
         self.pending_irq = true;
     }
 
     // Drain any bytes the input thread has delivered into the RX queue.
     fn poll_serial_input(&mut self) {
-        let mut arrived = Vec::new();
-        if let Some(rx) = &self.rx_recv {
-            while let Ok(b) = rx.try_recv() {
-                arrived.push(b);
-            }
+        if self.serial.service_input() {
+            self.irq_cause |= IRQ_CAUSE_SERIAL;
+            self.pending_irq = true;
         }
-        self.ingest_serial_bytes(&arrived);
+    }
+
+    // Update mouse state as if sampled from the host window, raising an IRQ on
+    // any change (mirrors the real per-frame polling). Split out so it is
+    // testable without a window.
+    #[cfg(test)]
+    pub(super) fn set_mouse_state(&mut self, x: u32, y: u32, buttons: u32) {
+        if self.mouse.update(x, y, buttons) {
+            self.irq_cause |= IRQ_CAUSE_MOUSE;
+            self.pending_irq = true;
+        }
     }
 
     // Called by the EI/DI instructions. Keeps the SR's IE bit in sync with the
@@ -71,14 +83,9 @@ impl Machine {
     pub(super) fn service_timer_interrupt(&mut self) -> Result<(), String> {
         self.poll_serial_input();
 
-        if let Some(interval) = self.timer_interval {
-            if interval > 0 {
-                self.timer_counter = self.timer_counter.wrapping_add(1);
-                if self.timer_counter >= interval {
-                    self.timer_counter = 0;
-                    self.pending_irq = true;
-                }
-            }
+        if self.timer.service() {
+            self.irq_cause |= IRQ_CAUSE_TIMER;
+            self.pending_irq = true;
         }
 
         if self.interrupt_enable && self.pending_irq {
@@ -173,5 +180,48 @@ mod tests {
         m.set_interrupt_enable(true);
         m.service_timer_interrupt().unwrap();
         assert_eq!(m.program_counter, 0, "no IRQ without a source");
+    }
+
+    #[test]
+    fn mouse_registers_reflect_state() {
+        use crate::constants::{MOUSE_BUTTONS_ADDR, MOUSE_BUTTON_LEFT, MOUSE_X_ADDR, MOUSE_Y_ADDR};
+        let mut m = Machine::new(false, true);
+        m.set_mouse_state(320, 240, MOUSE_BUTTON_LEFT);
+        assert_eq!(m.bus_read(MOUSE_X_ADDR), 320);
+        assert_eq!(m.bus_read(MOUSE_Y_ADDR), 240);
+        assert_eq!(m.bus_read(MOUSE_BUTTONS_ADDR), MOUSE_BUTTON_LEFT);
+    }
+
+    #[test]
+    fn mouse_change_raises_irq() {
+        let mut m = Machine::new(false, true);
+        assert!(!m.pending_irq);
+        m.set_mouse_state(10, 20, 0);
+        assert!(m.pending_irq, "a mouse move raises an IRQ");
+        m.pending_irq = false;
+        m.set_mouse_state(10, 20, 0);
+        assert!(!m.pending_irq, "no change means no new IRQ");
+        m.set_mouse_state(10, 20, crate::constants::MOUSE_BUTTON_LEFT);
+        assert!(m.pending_irq, "a button press raises an IRQ");
+    }
+
+    #[test]
+    fn display_swap_copies_back_to_front() {
+        use crate::constants::{DISPLAY_SWAP_ADDR, VRAM_BASE};
+        let mut m = Machine::new(false, true);
+        // Draw into the back buffer.
+        m.bus_write(VRAM_BASE, 0x00AA_BBCC);
+        assert!(!m.swapped, "no swap yet");
+        assert_eq!(m.front[0], 0, "front untouched before swap");
+
+        // Present: back -> front.
+        m.bus_write(DISPLAY_SWAP_ADDR, 1);
+        assert!(m.swapped, "swap latched");
+        assert_eq!(m.front[0], 0x00AA_BBCC, "front now holds the drawn pixel");
+
+        // Further drawing lands in back only, not shown until the next swap.
+        m.bus_write(VRAM_BASE, 0x0011_2233);
+        assert_eq!(m.front[0], 0x00AA_BBCC, "front unchanged until next swap");
+        assert_eq!(m.bus_read(VRAM_BASE), 0x0011_2233, "back has the new pixel");
     }
 }

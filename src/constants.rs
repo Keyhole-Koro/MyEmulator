@@ -46,10 +46,30 @@ pub const DMA2D_HEIGHT_ADDR: u32 = IO_BASE + 0x2C;
 pub const DMA2D_STRIDE_ADDR: u32 = IO_BASE + 0x30;
 pub const DMA2D_CMD_ADDR: u32 = IO_BASE + 0x34; // W: 1 = fill_rect
 
-// Single fixed IRQ vector slot inside the I/O region. The kernel stores the
-// address of its interrupt handler here; on a timer interrupt the CPU reads it
-// to find where to jump. Living in I/O space keeps it isolated from RAM/heap.
+// Display control. Writing 1 to DISPLAY_SWAP copies the back buffer (where all
+// VRAM writes land) to the front buffer that the display scans out, so a frame
+// is only ever shown once fully drawn (no tearing). Until the first swap the
+// back buffer is presented directly, so programs that never swap still render.
+pub const DISPLAY_SWAP_ADDR: u32 = IO_BASE + 0x38; // W: 1 = present back buffer
+
+// Mouse device registers. Updated once per display refresh from the host
+// window; a change in position or button state raises an IRQ so the kernel's
+// handler can react (same shared vector as the timer/serial).
+pub const MOUSE_X_ADDR: u32 = IO_BASE + 0x40; // R: cursor x in display pixels
+pub const MOUSE_Y_ADDR: u32 = IO_BASE + 0x44; // R: cursor y in display pixels
+pub const MOUSE_BUTTONS_ADDR: u32 = IO_BASE + 0x48; // R: bit0 = left button down
+
+pub const MOUSE_BUTTON_LEFT: u32 = 0x1;
+
 pub const IRQ_VECTOR_ADDR: u32 = IO_BASE + 0x80;
+
+// Interrupt Cause Register. The hardware sets these bits when an event occurs,
+// and raises pending_irq. The kernel reads this to dispatch the interrupt,
+// then writes to it to clear the bits it handled.
+pub const IRQ_CAUSE_ADDR: u32 = IO_BASE + 0x84; // R/W
+pub const IRQ_CAUSE_TIMER: u32 = 1 << 0;
+pub const IRQ_CAUSE_MOUSE: u32 = 1 << 1;
+pub const IRQ_CAUSE_SERIAL: u32 = 1 << 2;
 
 // Status register interrupt-enable bit.
 pub const SR_IE: u32 = 0x1;
