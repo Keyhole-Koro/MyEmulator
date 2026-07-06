@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::fs::File;
-use std::sync::mpsc::Receiver;
 use std::time::Instant;
 use minifb::{Window, WindowOptions};
 

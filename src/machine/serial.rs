@@ -22,6 +22,7 @@ impl SerialDevice {
         self.rx_recv = Some(recv);
     }
 
+    #[cfg(test)]
     pub fn ingest_bytes(&mut self, bytes: &[u8]) {
         self.rx_queue.extend(bytes.iter().copied());
     }

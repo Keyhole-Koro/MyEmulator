@@ -4,7 +4,7 @@ use std::thread;
 
 use crate::constants::{
     is_ram_address, IRQ_VECTOR_ADDR, SR_IE, 
-    IRQ_CAUSE_TIMER, IRQ_CAUSE_SERIAL, IRQ_CAUSE_MOUSE
+    IRQ_CAUSE_TIMER, IRQ_CAUSE_SERIAL
 };
 
 use super::Machine;
@@ -38,6 +38,7 @@ impl Machine {
     // Queue received bytes and raise an IRQ so the kernel's handler runs
     // (independent of the timer). Split out from polling so it is testable
     // without the stdin thread.
+    #[cfg(test)]
     pub(super) fn ingest_serial_bytes(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -61,7 +62,7 @@ impl Machine {
     #[cfg(test)]
     pub(super) fn set_mouse_state(&mut self, x: u32, y: u32, buttons: u32) {
         if self.mouse.update(x, y, buttons) {
-            self.irq_cause |= IRQ_CAUSE_MOUSE;
+            self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
             self.pending_irq = true;
         }
     }
