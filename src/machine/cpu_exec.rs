@@ -41,6 +41,7 @@ impl Machine {
             }
             0x03 => {
                 let addr = self.get_register(inst.reg2)?;
+                self.profile_mem_read(addr);
                 let value = self.bus_load(addr);
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
@@ -48,10 +49,12 @@ impl Machine {
             0x04 => {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)?;
+                self.profile_mem_write(addr);
                 self.bus_write(addr, value);
             }
             0x1C => {
                 let addr = self.get_register(inst.reg2)?;
+                self.profile_mem_read(addr);
                 let value = self.bus_load_byte(addr) as u32;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
@@ -59,6 +62,7 @@ impl Machine {
             0x1D => {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)? as u8;
+                self.profile_mem_write(addr);
                 self.bus_write_byte(addr, value);
             }
             0x05 => {

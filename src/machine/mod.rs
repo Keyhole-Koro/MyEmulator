@@ -12,6 +12,7 @@ mod diagnostics;
 mod interrupts;
 mod memory_bus;
 mod mouse;
+mod profiler;
 mod registers;
 mod run_loop;
 mod serial;
@@ -20,6 +21,7 @@ mod stack;
 mod timer;
 
 use mouse::MouseDevice;
+use profiler::Profiler;
 use serial::SerialDevice;
 use ssd::SsdDevice;
 use timer::TimerDevice;
@@ -57,6 +59,9 @@ pub struct Machine {
     verbose: bool,
     serial_log: Option<File>,
     trace_log: Option<File>,
+    // Instruction-level profiler. None unless --profile is passed; when present
+    // the run loop and memory bus feed it one event per instruction/access.
+    profiler: Option<Profiler>,
 
     stack_pointer: u32,
     base_pointer: u32,
@@ -114,6 +119,7 @@ impl Machine {
             verbose,
             serial_log: None,
             trace_log: None,
+            profiler: None,
             stack_pointer: RAM_END_EXCLUSIVE,
             base_pointer: 0,
             program_counter: RAM_START,
@@ -137,6 +143,22 @@ impl Machine {
     // Attach a host disk-image file as the SSD's backing store.
     pub fn load_disk(&mut self, path: std::path::PathBuf) -> Result<(), String> {
         self.ssd = SsdDevice::load(path)?;
+        Ok(())
+    }
+
+    // Turn on instruction-level profiling. `entry_pc` seeds the call graph's
+    // outermost frame so instructions retired before the first CALL are still
+    // attributed. Must be called before execution starts.
+    pub fn enable_profiler(&mut self, entry_pc: u32) {
+        self.profiler = Some(Profiler::new(entry_pc));
+    }
+
+    // Flush the collected profile to `path` as JSON. No-op (Ok) if profiling was
+    // never enabled.
+    pub fn write_profile<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<(), String> {
+        if let Some(profiler) = self.profiler.as_mut() {
+            profiler.write_json(path)?;
+        }
         Ok(())
     }
 }

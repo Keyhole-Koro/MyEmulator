@@ -28,6 +28,12 @@ pub fn run() -> Result<(), String> {
     let start_address = 0x0000_0000;
     machine.load_program(&binary, start_address);
     machine.set_instruction_pointer(start_address);
+
+    // Enable profiling before execution so the call graph is rooted at the entry
+    // point and every retired instruction is counted.
+    if args.profile_out.is_some() {
+        machine.enable_profiler(start_address);
+    }
     let debug_mode = args.trace
         || args.break_addr.is_some()
         || args.step_count.is_some()
@@ -39,6 +45,11 @@ pub fn run() -> Result<(), String> {
         step_count: args.step_count,
         timer_interval: args.timer_interval,
     })?;
+
+    if let Some(profile_path) = &args.profile_out {
+        machine.write_profile(profile_path)?;
+        println!("Profile written to {}", profile_path);
+    }
 
     if !debug_mode {
         machine.display_stack();

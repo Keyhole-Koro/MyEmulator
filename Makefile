@@ -8,6 +8,7 @@ BREAK ?=
 STEP ?=
 MEM_ADDR ?=
 MEM_LEN ?=
+PROFILE ?= profile.json
 
 RUST_SOURCES := $(shell find src -name '*.rs')
 
@@ -53,6 +54,12 @@ mem-myemu: $(TARGET)
 		exit 1; \
 	fi
 	./$(TARGET) -i $(IN) --mem $(MEM_ADDR) $(MEM_LEN) $(ARGS)
+
+# Collect an instruction-level profile into PROFILE (default profile.json).
+# Pair with a bounded run (STEP=<n>) for programs that never halt, e.g. the UI
+# kernel, then render with: python3 qa/profile_report.py <PROFILE> --map <img.map>
+profile-myemu: $(TARGET)
+	./$(TARGET) -i $(IN) --headless --profile $(PROFILE) $(ARGS)
 
 gdb: $(TARGET)
 	gdb --args ./$(TARGET) $(ARGS)

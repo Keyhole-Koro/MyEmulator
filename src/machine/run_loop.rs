@@ -102,6 +102,15 @@ impl Machine {
             let instruction = self.bus_read(self.program_counter);
             self.program_counter = self.program_counter.wrapping_add(4);
 
+            // Opcode is needed for both the trace print and the profiler; decode
+            // once here so we don't decode twice on the hot path.
+            let profiling = self.profiler.is_some();
+            let opcode = if profiling || self.verbose || options.trace {
+                decode_instruction(instruction).opcode
+            } else {
+                0
+            };
+
             if self.verbose || options.trace {
                 let inst = decode_instruction(instruction);
                 println!("------------------------------");
@@ -124,6 +133,26 @@ impl Machine {
 
             self.execute_instruction(instruction)?;
             executed_steps = executed_steps.wrapping_add(1);
+
+            // Feed the profiler after the instruction so program_counter and
+            // link_register already reflect any jump/call it performed.
+            if profiling {
+                const OPCODE_CALL: u8 = 0x1B;
+                let landed_pc = self.program_counter;
+                let return_addr = self.link_register;
+                if let Some(profiler) = self.profiler.as_mut() {
+                    profiler.record_instruction(current_pc, opcode);
+                    if opcode == OPCODE_CALL {
+                        // The CALL set LR to its return address and PC to the
+                        // callee entry; push a call-graph frame for it.
+                        profiler.record_call(landed_pc, return_addr);
+                    } else {
+                        // Any other control flow (return via `mov pc, lr`, jump,
+                        // fallthrough) may unwind one or more call frames.
+                        profiler.record_control_flow(landed_pc);
+                    }
+                }
+            }
 
             if let Some(step_limit) = options.step_count {
                 if executed_steps >= step_limit {
