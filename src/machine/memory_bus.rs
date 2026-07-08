@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use crate::constants::{
     is_io_address, is_ram_address, is_vram_address, VRAM_BASE,
-    SERIAL_LSR_ADDR, SERIAL_LSR_DR, SERIAL_LSR_THRE, SERIAL_RX_ADDR,
+    SERIAL_LSR_ADDR, SERIAL_RX_ADDR,
     SERIAL_TX_ADDR,
     SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR,
     IRQ_CAUSE_ADDR,

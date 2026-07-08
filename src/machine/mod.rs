@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::fs::File;
-use std::sync::mpsc::Receiver;
 use std::time::Instant;
 use minifb::{Window, WindowOptions};
 
@@ -148,6 +146,8 @@ impl Machine {
         Ok(())
     }
 
+    // ROM loading path is not wired up yet; keep the API for the firmware boot flow.
+    #[allow(dead_code)]
     pub fn load_rom(&mut self, binary: &[u32], start_address: u32) {
         for (i, &word) in binary.iter().enumerate() {
             let addr = start_address + (i as u32) * 4;
