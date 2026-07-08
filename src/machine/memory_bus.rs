@@ -96,6 +96,15 @@ impl Machine {
         if is_ram_address(address) {
             return self.ram_read_word(address);
         }
+        
+        if crate::constants::is_rom_address(address) {
+            let offset = (address - crate::constants::ROM_START) as usize;
+            if offset + 3 < self.rom.len() {
+                let b = &self.rom[offset..offset + 4];
+                return u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+            }
+            return 0;
+        }
 
         if is_vram_address(address) {
             let offset = (address - VRAM_BASE) as usize / 4;
@@ -170,6 +179,14 @@ impl Machine {
     pub(super) fn bus_read_byte(&self, address: u32) -> u8 {
         if is_ram_address(address) {
             return self.ram[address as usize];
+        }
+
+        if crate::constants::is_rom_address(address) {
+            let offset = (address - crate::constants::ROM_START) as usize;
+            if offset < self.rom.len() {
+                return self.rom[offset];
+            }
+            return 0;
         }
 
         if is_vram_address(address) {

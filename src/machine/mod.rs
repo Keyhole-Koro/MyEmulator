@@ -38,6 +38,7 @@ pub struct DebugOptions {
 pub struct Machine {
     // Sparse byte-addressed RAM keeps behavior while avoiding eager 512MB allocation.
     ram: Vec<u8>,
+    rom: Vec<u8>,
     io: HashMap<u32, u32>,
     // Back buffer: all VRAM writes (direct and DMA2D) land here.
     vram: Vec<u32>,
@@ -108,6 +109,7 @@ impl Machine {
 
         Self {
             ram: vec![0u8; RAM_SIZE as usize],
+            rom: vec![0u8; crate::constants::ROM_SIZE as usize],
             io: HashMap::new(),
             vram: vec![0; (VRAM_SIZE / 4) as usize],
             front: vec![0; (VRAM_SIZE / 4) as usize],
@@ -144,6 +146,17 @@ impl Machine {
     pub fn load_disk(&mut self, path: std::path::PathBuf) -> Result<(), String> {
         self.ssd = SsdDevice::load(path)?;
         Ok(())
+    }
+
+    pub fn load_rom(&mut self, binary: &[u32], start_address: u32) {
+        for (i, &word) in binary.iter().enumerate() {
+            let addr = start_address + (i as u32) * 4;
+            let offset = (addr - crate::constants::ROM_START) as usize;
+            if offset + 3 < self.rom.len() {
+                let bytes = word.to_be_bytes();
+                self.rom[offset..offset + 4].copy_from_slice(&bytes);
+            }
+        }
     }
 
     // Turn on instruction-level profiling. `entry_pc` seeds the call graph's
