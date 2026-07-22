@@ -11,6 +11,9 @@ MEM_LEN ?=
 
 RUST_SOURCES := $(shell find src -name '*.rs')
 
+.PHONY: all run-myemu debug-myemu trace-myemu break-myemu step-myemu mem-myemu \
+	gdb test test-all clean
+
 all: $(TARGET)
 
 $(TARGET): Cargo.toml $(RUST_SOURCES)
@@ -59,6 +62,8 @@ gdb: $(TARGET)
 
 test:
 	$(CARGO) test
+
+test-all: test
 
 clean:
 	$(CARGO) clean
