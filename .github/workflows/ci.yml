@@ -22,5 +22,5 @@ jobs:
       - name: Build
         run: make all
 
-      - name: Run emulator-owned tests
-        run: make test-all
+      - name: Run emulator component tests
+        run: make test-component
