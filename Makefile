@@ -12,7 +12,7 @@ MEM_LEN ?=
 RUST_SOURCES := $(shell find src -name '*.rs')
 
 .PHONY: all run-myemu debug-myemu trace-myemu break-myemu step-myemu mem-myemu \
-	gdb test test-all clean
+	gdb test test-component test-all clean
 
 all: $(TARGET)
 
@@ -63,7 +63,8 @@ gdb: $(TARGET)
 test:
 	$(CARGO) test
 
-test-all: test
+test-component: test
+test-all: test-component
 
 clean:
 	$(CARGO) clean
