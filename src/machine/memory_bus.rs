@@ -62,7 +62,8 @@ impl Machine {
                     return;
                 }
                 crate::constants::DISPLAY_SWAP_ADDR => {
-                    if value == 1 {
+                    if value != 0 {
+                        self.maybe_refresh_display(false);
                         self.front.copy_from_slice(&self.vram);
                         self.swapped = true;
                     }
@@ -72,6 +73,12 @@ impl Machine {
                     self.irq_cause &= !value; // Ack (clear) the bits that are written as 1
                     if self.irq_cause == 0 {
                         self.pending_irq = false;
+                    }
+                    return;
+                }
+                crate::constants::MOUSE_EVT_POP_ADDR => {
+                    if value != 0 {
+                        self.mouse.pop_event();
                     }
                     return;
                 }
@@ -85,9 +92,10 @@ impl Machine {
                     let _ = serial_log.write_all(&[ch]);
                     let _ = serial_log.flush();
                 }
-                if ch == b'\n' {
-                    let _ = io::stdout().flush();
-                }
+                // Flush every byte, not just on newline: prompts like "MyOS> "
+                // carry no trailing newline and would otherwise stay buffered and
+                // never appear in the terminal.
+                let _ = io::stdout().flush();
             }
         }
     }
@@ -130,6 +138,18 @@ impl Machine {
             }
             if address == crate::constants::MOUSE_BUTTONS_ADDR {
                 return self.mouse.buttons;
+            }
+            if address == crate::constants::MOUSE_EVT_STATUS_ADDR {
+                return self.mouse.event_count();
+            }
+            if address == crate::constants::MOUSE_EVT_X_ADDR {
+                return self.mouse.head_event().x;
+            }
+            if address == crate::constants::MOUSE_EVT_Y_ADDR {
+                return self.mouse.head_event().y;
+            }
+            if address == crate::constants::MOUSE_EVT_BTN_ADDR {
+                return self.mouse.head_event().buttons;
             }
             if address == SERIAL_LSR_ADDR {
                 return self.serial.lsr();

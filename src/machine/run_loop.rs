@@ -10,8 +10,10 @@ impl Machine {
     // Scan VRAM out to the window if at least one refresh interval has elapsed
     // since the last frame. Mirrors a hardware display controller refreshing at
     // a fixed rate independent of CPU speed. Returns false if the window was
-    // closed (the caller should halt). No-op in headless mode.
-    fn maybe_refresh_display(&mut self, force: bool) -> bool {
+    // closed (the caller should halt). No-op in headless mode. Input is NOT
+    // sampled here — poll_input runs at its own, much faster cadence so brief
+    // clicks between frames are still observed.
+    pub(super) fn maybe_refresh_display(&mut self, force: bool) -> bool {
         if self.headless {
             return true;
         }
@@ -31,13 +33,46 @@ impl Machine {
                 .update_with_buffer(scanout, DISPLAY_WIDTH, DISPLAY_HEIGHT)
                 .unwrap();
             self.last_frame = Instant::now();
+        }
+        true
+    }
 
-            // Sample the host pointer. A change in position or button state
-            // raises an IRQ so the kernel handler can poll the mouse registers.
+    // Pump the host window's event queue and sample the pointer, rate-limited
+    // to MOUSE_POLL_MS. Every observed change lands in the device's event FIFO
+    // and raises the mouse IRQ, so a press+release that both happen inside one
+    // display frame still reach the guest as two events instead of vanishing.
+    // Called on batch boundaries and WFI spins. No-op in headless mode.
+    pub(super) fn poll_input(&mut self) {
+        if self.headless {
+            return;
+        }
+        if self.last_input_poll.elapsed() < Duration::from_millis(crate::constants::MOUSE_POLL_MS) {
+            return;
+        }
+        self.last_input_poll = Instant::now();
+        if let Some(window) = &mut self.window {
+            // Process host window events without presenting a frame; scan-out
+            // stays on the display refresh cadence.
+            window.update();
             let (mx, my) = window
                 .get_mouse_pos(minifb::MouseMode::Clamp)
                 .unwrap_or((0.0, 0.0));
-            let (nx, ny) = (mx as u32, my as u32);
+            // minifb reports raw window pixels. The WM may have scaled or
+            // resized the window (WSLg HiDPI stretches it), in which case raw
+            // pixels no longer match framebuffer coordinates and the guest
+            // would see the cursor far off-screen. Normalize by the actual
+            // window size; identity when the window is 1024x768.
+            let (win_w, win_h) = window.get_size();
+            let scale_coord = |v: f32, win: usize, fb: usize| -> u32 {
+                let scaled = if win > 0 && win != fb {
+                    v * fb as f32 / win as f32
+                } else {
+                    v
+                };
+                (scaled as u32).min(fb as u32 - 1)
+            };
+            let nx = scale_coord(mx, win_w, DISPLAY_WIDTH);
+            let ny = scale_coord(my, win_h, DISPLAY_HEIGHT);
             let buttons = if window.get_mouse_down(minifb::MouseButton::Left) {
                 crate::constants::MOUSE_BUTTON_LEFT
             } else {
@@ -48,7 +83,6 @@ impl Machine {
                 self.pending_irq = true;
             }
         }
-        true
     }
     pub fn set_instruction_pointer(&mut self, address: u32) {
         self.program_counter = address;
@@ -67,7 +101,6 @@ impl Machine {
     }
 
     pub fn execute_with_debug(&mut self, options: DebugOptions) -> Result<(), String> {
-        self.timer.interval = options.timer_interval;
         self.start_serial_input();
 
         let mut executed_steps = 0u64;
@@ -87,16 +120,60 @@ impl Machine {
                 }
             }
 
-            // Only service timer/serial and refresh display every BATCH_SIZE
-            // instructions to avoid per-instruction syscall overhead.
+            // Poll the devices (timer/serial/SSD) and refresh the display
+            // periodically. These are the expensive checks, so they run on
+            // batch boundaries while executing; when idle (WFI) they run every
+            // spin so the CPU wakes promptly.
             batch_counter += 1;
-            if batch_counter >= BATCH_SIZE {
+            if batch_counter >= BATCH_SIZE || self.waiting_for_interrupt {
                 batch_counter = 0;
-                self.service_timer_interrupt()?;
+                // Exit cleanly on Ctrl+C / SIGTERM so the minifb Window is
+                // dropped (destroying the X11 window) instead of orphaned.
+                if crate::signals::requested() {
+                    self.halted = true;
+                    break;
+                }
+                self.poll_devices();
+                self.poll_input();
                 if !self.maybe_refresh_display(false) {
                     self.halted = true;
                     break;
                 }
+            }
+
+            // Vector to a pending, enabled IRQ before the next fetch. This runs
+            // every instruction (a two-boolean check on the fast path) so
+            // dispatch latency is one instruction like real hardware, rather
+            // than up to a whole polling batch; it also wakes the CPU out of
+            // WFI the moment a cause is raised.
+            self.try_dispatch_irq()?;
+
+            // WFI: the CPU is idle until an interrupt fires. Rather than busy-spin
+            // (burning host CPU and pinning a core), sleep the host thread until
+            // the next timer tick is due, then loop back to service it. Real time
+            // keeps advancing, so the timer still wakes the guest.
+            if self.waiting_for_interrupt {
+                // Under --step the run would otherwise hang here without ever
+                // reaching the step limit (WFI executes no instructions), so
+                // report the idle state and pause instead.
+                if options.step_count.is_some() {
+                    println!("[STEP] CPU idle (WFI) after {} instruction(s)", executed_steps);
+                    self.print_registers();
+                    return Ok(());
+                }
+                // Cap the sleep so display refresh and signals stay responsive.
+                // With the timer disabled there is no next tick to wait for;
+                // sleep the cap anyway instead of busy-spinning the host core
+                // (serial input or the mouse can still wake the guest).
+                let cap = Duration::from_millis(4);
+                let wait = match self.timer.time_until_next() {
+                    Some(until_tick) => until_tick.min(cap),
+                    None => cap,
+                };
+                if !wait.is_zero() {
+                    std::thread::sleep(wait);
+                }
+                continue;
             }
 
             let instruction = self.bus_read(self.program_counter);

@@ -29,8 +29,6 @@ pub struct DebugOptions {
     pub trace: bool,
     pub break_addr: Option<u32>,
     pub step_count: Option<u64>,
-    // When set, raise a timer interrupt every N executed instructions.
-    pub timer_interval: Option<u64>,
 }
 
 pub struct Machine {
@@ -53,6 +51,9 @@ pub struct Machine {
     // how many instructions the CPU has executed, so we drive updates off real
     // time rather than instruction counts.
     last_frame: Instant,
+    // Wall-clock time host input was last pumped/sampled (poll_input). Runs on
+    // its own, faster cadence than the display so sub-frame clicks are caught.
+    last_input_poll: Instant,
 
     registers: [u32; 8],
     verbose: bool,
@@ -77,7 +78,14 @@ pub struct Machine {
     // Interrupt state.
     interrupt_enable: bool,
     pending_irq: bool,
+    waiting_for_interrupt: bool,
     irq_cause: u32,
+    // Starvation diagnostics: wall-clock entry time of the in-flight timer IRQ
+    // handler (closed by iret), how many consecutive handlers overran the tick
+    // period, and whether the one-shot warning has been printed.
+    timer_handler_entered: Option<Instant>,
+    slow_timer_handler_streak: u32,
+    starvation_warned: bool,
     // Devices
     serial: SerialDevice,
     mouse: MouseDevice,
@@ -88,7 +96,7 @@ pub struct Machine {
 impl Machine {
     pub fn new(verbose: bool, headless: bool) -> Self {
         let window = if !headless {
-            let win = Window::new(
+            let mut win = Window::new(
                 "MyEmulator Display",
                 DISPLAY_WIDTH,
                 DISPLAY_HEIGHT,
@@ -97,9 +105,12 @@ impl Machine {
                 panic!("{}", e);
             });
             // We gate scan-out ourselves on wall-clock time (see
-            // maybe_refresh_display), so minifb's own rate limiter is left at
-            // its default (off) to avoid blocking the CPU thread inside
-            // update_with_buffer.
+            // maybe_refresh_display) and pump input at MOUSE_POLL_MS (see
+            // poll_input), so minifb's own rate limiter must be OFF. Its
+            // default is a hidden 4 ms sleep inside every update()/
+            // update_with_buffer() call, which would stall the CPU thread on
+            // each input poll and starve the guest.
+            win.set_target_fps(0);
             Some(win)
         } else {
             None
@@ -115,6 +126,7 @@ impl Machine {
             window,
             headless,
             last_frame: Instant::now(),
+            last_input_poll: Instant::now(),
             registers: [0; 8],
             verbose,
             serial_log: None,
@@ -132,7 +144,11 @@ impl Machine {
             overflow_flag: false,
             interrupt_enable: false,
             pending_irq: false,
+            waiting_for_interrupt: false,
             irq_cause: 0,
+            timer_handler_entered: None,
+            slow_timer_handler_streak: 0,
+            starvation_warned: false,
             serial: SerialDevice::new(),
             mouse: MouseDevice::new(),
             timer: TimerDevice::new(),

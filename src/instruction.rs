@@ -1,3 +1,34 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Opcode {
+    Mov = 0x01, Movi = 0x02, Movis = 0x18, Ld = 0x03, St = 0x04, Ldb = 0x1C, Stb = 0x1D,
+    Add = 0x05, Addis = 0x19, Sub = 0x06, Cmp = 0x07, And = 0x08, Or = 0x09, Xor = 0x0A,
+    Shl = 0x0B, Shr = 0x0C, Jmp = 0x0D, Jz = 0x0E, Jnz = 0x0F, Jg = 0x10, Jl = 0x11,
+    Ja = 0x12, Jb = 0x13, Call = 0x1B, Push = 0x14, Pop = 0x15, In = 0x16, Out = 0x17,
+    Debug = 0x1A, Ei = 0x1E, Di = 0x1F, Iret = 0x20, Wfi = 0x21, Halt = 0x3F,
+}
+
+impl TryFrom<u8> for Opcode {
+    type Error = u8;
+    fn try_from(val: u8) -> Result<Self, Self::Error> {
+        match val {
+            0x01 => Ok(Opcode::Mov), 0x02 => Ok(Opcode::Movi), 0x18 => Ok(Opcode::Movis),
+            0x03 => Ok(Opcode::Ld), 0x04 => Ok(Opcode::St), 0x1C => Ok(Opcode::Ldb),
+            0x1D => Ok(Opcode::Stb), 0x05 => Ok(Opcode::Add), 0x19 => Ok(Opcode::Addis),
+            0x06 => Ok(Opcode::Sub), 0x07 => Ok(Opcode::Cmp), 0x08 => Ok(Opcode::And),
+            0x09 => Ok(Opcode::Or), 0x0A => Ok(Opcode::Xor), 0x0B => Ok(Opcode::Shl),
+            0x0C => Ok(Opcode::Shr), 0x0D => Ok(Opcode::Jmp), 0x0E => Ok(Opcode::Jz),
+            0x0F => Ok(Opcode::Jnz), 0x10 => Ok(Opcode::Jg), 0x11 => Ok(Opcode::Jl),
+            0x12 => Ok(Opcode::Ja), 0x13 => Ok(Opcode::Jb), 0x1B => Ok(Opcode::Call),
+            0x14 => Ok(Opcode::Push), 0x15 => Ok(Opcode::Pop), 0x16 => Ok(Opcode::In),
+            0x17 => Ok(Opcode::Out), 0x1A => Ok(Opcode::Debug), 0x1E => Ok(Opcode::Ei),
+            0x1F => Ok(Opcode::Di), 0x20 => Ok(Opcode::Iret), 0x21 => Ok(Opcode::Wfi),
+            0x3F => Ok(Opcode::Halt),
+            _ => Err(val),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct DecodedInstruction {
     pub opcode: u8,
@@ -80,6 +111,7 @@ pub fn mnemonic(opcode: u8) -> &'static str {
         0x1E => "EI",
         0x1F => "DI",
         0x20 => "IRET",
+        0x21 => "WFI",
         0x3F => "HALT",
         _ => "UNKNOWN",
     }

@@ -68,6 +68,33 @@ impl Machine {
         }
     }
 
+    // Called by the iret instruction. Closes the timer-handler runtime
+    // measurement opened in try_dispatch_irq: if handlers keep taking longer
+    // than the tick period, the guest can never make forward progress between
+    // interrupts (total starvation), so warn once.
+    pub(super) fn note_handler_return(&mut self) {
+        let Some(entered) = self.timer_handler_entered.take() else {
+            return;
+        };
+        let Some(period) = self.timer.period() else {
+            return;
+        };
+        if entered.elapsed() >= period {
+            self.slow_timer_handler_streak += 1;
+            if self.slow_timer_handler_streak >= 16 && !self.starvation_warned {
+                self.starvation_warned = true;
+                eprintln!(
+                    "[myemu] warning: timer IRQ handler exceeded the {}us tick period \
+                     16 times in a row; the guest CPU is likely starving \
+                     (reduce handler cost or raise --timer-interval)",
+                    period.as_micros()
+                );
+            }
+        } else {
+            self.slow_timer_handler_streak = 0;
+        }
+    }
+
     // Called by the EI/DI instructions. Keeps the SR's IE bit in sync with the
     // internal flag so the kernel/debugger can observe interrupt state.
     pub(super) fn set_interrupt_enable(&mut self, enable: bool) {
@@ -79,10 +106,11 @@ impl Machine {
         }
     }
 
-    // Advances the timer and, when an interrupt is due and enabled, saves PC/SR
-    // and vectors to the registered handler. Push order is PC then SR so the
-    // handler's `iret` pops SR then PC (reverse order).
-    pub(super) fn service_timer_interrupt(&mut self) -> Result<(), String> {
+    // Poll the interrupt sources: drain serial input, advance the timer, and
+    // complete any in-flight SSD transfer. Sets cause bits and pending_irq but
+    // does not vector; try_dispatch_irq does that on the next instruction
+    // boundary. Called on batch boundaries and while idle in WFI.
+    pub(super) fn poll_devices(&mut self) {
         self.poll_serial_input();
 
         if self.timer.service() {
@@ -90,6 +118,16 @@ impl Machine {
             self.pending_irq = true;
         }
 
+        self.service_ssd();
+    }
+
+    // When an interrupt is pending and enabled, saves PC/SR and vectors to the
+    // registered handler. Push order is PC then SR so the handler's `iret` pops
+    // SR then PC (reverse order). Called before every instruction fetch: the
+    // fast path is two boolean loads, so real-CPU dispatch latency (one
+    // instruction) costs nothing measurable.
+    #[inline]
+    pub(super) fn try_dispatch_irq(&mut self) -> Result<(), String> {
         if self.interrupt_enable && self.pending_irq {
             let vector = self.bus_read(IRQ_VECTOR_ADDR);
             // Guard against an unregistered vector. The handler lives in RAM, so
@@ -98,15 +136,27 @@ impl Machine {
             // it fires once a real handler is registered.
             if is_ram_address(vector) {
                 self.pending_irq = false;
+                self.waiting_for_interrupt = false;
                 self.push(self.program_counter)?;
-                self.push(self.status_register)?;
+                
+                let mut sr = self.status_register;
+                if self.carry_flag { sr |= crate::constants::SR_CARRY; }
+                if self.zero_flag { sr |= crate::constants::SR_ZERO; }
+                if self.sign_flag { sr |= crate::constants::SR_SIGN; }
+                if self.overflow_flag { sr |= crate::constants::SR_OVERFLOW; }
+                self.push(sr)?;
                 // Disable further interrupts until the handler re-enables them
                 // (prevents reentrant timer interrupts mid-handler).
                 self.set_interrupt_enable(false);
                 self.program_counter = vector;
+                // Timer-handler runtime measurement for the starvation warning:
+                // note when a timer IRQ enters its handler; the iret opcode
+                // closes the measurement.
+                if self.irq_cause & IRQ_CAUSE_TIMER != 0 {
+                    self.timer_handler_entered = Some(std::time::Instant::now());
+                }
             }
         }
-
         Ok(())
     }
 }
@@ -170,9 +220,34 @@ mod tests {
         m.bus_write(IRQ_VECTOR_ADDR, handler);
         m.set_interrupt_enable(true);
         m.ingest_serial_bytes(b"z");
-        m.service_timer_interrupt().unwrap();
+        m.try_dispatch_irq().unwrap();
         assert_eq!(m.program_counter, handler, "PC vectored to the handler");
         assert!(!m.interrupt_enable, "interrupts masked entering the handler");
+    }
+
+    #[test]
+    fn pending_irq_vectors_on_next_instruction_not_batch_boundary() {
+        use super::super::DebugOptions;
+        let mut m = Machine::new(false, true);
+        let handler = 0x0000_0200u32;
+        const HALT: u32 = 0x3F << 26;
+        const MOV_R1_R1: u32 = (0x01 << 26) | (1 << 21) | (1 << 16);
+        m.bus_write(IRQ_VECTOR_ADDR, handler);
+        m.bus_write(handler, HALT);
+        for i in 0..4u32 {
+            m.bus_write(i * 4, MOV_R1_R1);
+        }
+        m.set_interrupt_enable(true);
+        m.ingest_serial_bytes(b"x");
+        // One step is enough: the IRQ must vector before the first fetch, so
+        // the single executed instruction is the handler's HALT — well before
+        // the old 1000-instruction polling batch would have dispatched it.
+        let opts = DebugOptions {
+            step_count: Some(1),
+            ..Default::default()
+        };
+        m.execute_with_debug(opts).unwrap();
+        assert!(m.halted, "the handler's HALT ran as the very next instruction");
     }
 
     #[test]
@@ -180,7 +255,8 @@ mod tests {
         let mut m = Machine::new(false, true);
         m.bus_write(IRQ_VECTOR_ADDR, 0x0000_0100);
         m.set_interrupt_enable(true);
-        m.service_timer_interrupt().unwrap();
+        m.poll_devices();
+        m.try_dispatch_irq().unwrap();
         assert_eq!(m.program_counter, 0, "no IRQ without a source");
     }
 

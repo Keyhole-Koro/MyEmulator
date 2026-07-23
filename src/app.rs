@@ -43,7 +43,6 @@ pub fn run() -> Result<(), String> {
         trace: args.trace,
         break_addr: args.break_addr,
         step_count: args.step_count,
-        timer_interval: args.timer_interval,
     })?;
 
     if let Some(profile_path) = &args.profile_out {
