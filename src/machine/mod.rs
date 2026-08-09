@@ -190,4 +190,8 @@ impl Machine {
         }
         Ok(())
     }
+
+    pub fn set_timer_interval(&mut self, micros: u64) {
+        self.timer.set_period_micros(micros);
+    }
 }

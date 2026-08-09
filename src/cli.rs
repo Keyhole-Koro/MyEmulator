@@ -15,6 +15,7 @@ pub struct Args {
     pub disk_file: Option<String>,
     // When set, collect an instruction-level profile and write it as JSON here.
     pub profile_out: Option<String>,
+    pub timer_interval: Option<u64>,
 }
 
 fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
@@ -53,6 +54,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut headless = false;
     let mut disk_file = None;
     let mut profile_out = None;
+    let mut timer_interval = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -124,6 +126,12 @@ pub fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--profile requires an output JSON path".to_string())?,
                 );
             }
+            "--timer-interval" => {
+                let raw = args
+                    .next()
+                    .ok_or_else(|| "--timer-interval requires a microsecond count".to_string())?;
+                timer_interval = Some(parse_u64_value(&raw, "--timer-interval")?);
+            }
             _ => {
                 return Err(format!("Unknown option: {}", arg));
             }
@@ -148,5 +156,6 @@ pub fn parse_args() -> Result<Args, String> {
         headless,
         disk_file,
         profile_out,
+        timer_interval,
     })
 }

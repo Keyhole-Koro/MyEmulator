@@ -10,6 +10,9 @@ pub fn run() -> Result<(), String> {
     let binary = read_binary_file(&args.input_file)?;
 
     let mut machine = Machine::new(args.verbose, args.headless);
+    if let Some(interval) = args.timer_interval {
+        machine.set_timer_interval(interval);
+    }
     if let Some(disk) = &args.disk_file {
         machine.load_disk(PathBuf::from(disk))?;
         println!("Mounted disk image {}", disk);
