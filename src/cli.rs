@@ -16,6 +16,8 @@ pub struct Args {
     // When set, collect an instruction-level profile and write it as JSON here.
     pub profile_out: Option<String>,
     pub timer_interval: Option<u64>,
+    // Report wall-clock time spent in each host display/input layer at exit.
+    pub io_stats: bool,
 }
 
 fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
@@ -55,6 +57,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut disk_file = None;
     let mut profile_out = None;
     let mut timer_interval = None;
+    let mut io_stats = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -114,6 +117,9 @@ pub fn parse_args() -> Result<Args, String> {
             "--headless" => {
                 headless = true;
             }
+            "--io-stats" => {
+                io_stats = true;
+            }
             "--disk" => {
                 disk_file = Some(
                     args.next()
@@ -157,5 +163,6 @@ pub fn parse_args() -> Result<Args, String> {
         disk_file,
         profile_out,
         timer_interval,
+        io_stats,
     })
 }

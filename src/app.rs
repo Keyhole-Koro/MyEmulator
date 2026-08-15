@@ -37,6 +37,9 @@ pub fn run() -> Result<(), String> {
     if args.profile_out.is_some() {
         machine.enable_profiler(start_address);
     }
+    if args.io_stats {
+        machine.enable_io_stats();
+    }
     let debug_mode = args.trace
         || args.break_addr.is_some()
         || args.step_count.is_some()
@@ -52,6 +55,8 @@ pub fn run() -> Result<(), String> {
         machine.write_profile(profile_path)?;
         println!("Profile written to {}", profile_path);
     }
+
+    machine.report_io_stats();
 
     if !debug_mode {
         machine.display_stack();

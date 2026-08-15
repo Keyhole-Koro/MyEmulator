@@ -29,9 +29,33 @@ impl Machine {
             // once; otherwise present the back buffer directly so programs that
             // never double-buffer still show their drawing.
             let scanout = if self.swapped { &self.front } else { &self.vram };
-            window
-                .update_with_buffer(scanout, DISPLAY_WIDTH, DISPLAY_HEIGHT)
-                .unwrap();
+            let t0 = Instant::now();
+            match self.shm.as_mut() {
+                // Fast path: the server reads the frame out of shared memory,
+                // so only a small request crosses the socket. poll_input()
+                // already pumps the window on its own cadence, so presenting
+                // must not call update() again -- that is the expensive half.
+                Some(shm) => {
+                    shm.present(scanout, DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32);
+                }
+                None => {
+                    window
+                        .update_with_buffer(scanout, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+                        .unwrap();
+                }
+            }
+            if let Some(stats) = self.io_stats.as_mut() {
+                stats.scanout_ns += t0.elapsed().as_nanos();
+                stats.scanout_calls += 1;
+                if let Some(prev) = stats.last_scanout {
+                    let gap = prev.elapsed().as_nanos();
+                    stats.scanout_gap_ns += gap;
+                    if gap > stats.scanout_gap_max_ns {
+                        stats.scanout_gap_max_ns = gap;
+                    }
+                }
+                stats.last_scanout = Some(Instant::now());
+            }
             self.last_frame = Instant::now();
         }
         true
@@ -50,34 +74,72 @@ impl Machine {
             return;
         }
         self.last_input_poll = Instant::now();
-        if let Some(window) = &mut self.window {
-            // Process host window events without presenting a frame; scan-out
-            // stays on the display refresh cadence.
-            window.update();
-            let (mx, my) = window
-                .get_mouse_pos(minifb::MouseMode::Clamp)
-                .unwrap_or((0.0, 0.0));
-            // minifb reports raw window pixels. The WM may have scaled or
-            // resized the window (WSLg HiDPI stretches it), in which case raw
-            // pixels no longer match framebuffer coordinates and the guest
-            // would see the cursor far off-screen. Normalize by the actual
-            // window size; identity when the window is 1024x768.
-            let (win_w, win_h) = window.get_size();
-            let scale_coord = |v: f32, win: usize, fb: usize| -> u32 {
-                let scaled = if win > 0 && win != fb {
-                    v * fb as f32 / win as f32
-                } else {
-                    v
+
+        // window.update() drains the X event queue. Measured on this host it
+        // costs ~0.5-1.2 ms, and running it at the 2 ms input cadence spent
+        // over half the emulator's wall clock inside X, starving the guest CPU
+        // -- the guest then completed only ~3 frames/s, which is what a cursor
+        // lagging by hundreds of milliseconds actually was.
+        //
+        // Pump it at display cadence instead. minifb refreshes its cached
+        // pointer inside update(), so the pointer is now sampled per frame
+        // rather than every 2 ms; MOUSE_POLL_MS still gates how often the
+        // cached value is latched into the device FIFO.
+        //
+        // (Querying the server directly at 2 ms was tried and is worse: on this
+        // host XQueryPointer is a ~540 us round trip, so any per-2 ms X call is
+        // too expensive. Getting sub-frame sampling back means having X push
+        // motion events to us rather than polling it -- see MYOS-010.)
+        let pump_due = self.last_window_pump.elapsed()
+            >= Duration::from_nanos(1_000_000_000 / DISPLAY_REFRESH_HZ);
+
+        if pump_due {
+            self.last_window_pump = Instant::now();
+            if let Some(window) = &mut self.window {
+                let t = Instant::now();
+                window.update();
+                let ns = t.elapsed().as_nanos();
+                if let Some(stats) = self.io_stats.as_mut() {
+                    stats.win_update_ns += ns;
+                    stats.win_update_calls += 1;
+                }
+            }
+        }
+
+        let t_ms = Instant::now();
+        let sampled = self.window.as_ref().and_then(|window| {
+                let (mx, my) = window.get_mouse_pos(minifb::MouseMode::Clamp)?;
+                // minifb reports raw window pixels. The WM may have scaled or
+                // resized the window (WSLg HiDPI stretches it), in which case
+                // raw pixels no longer match framebuffer coordinates and the
+                // guest would see the cursor far off-screen. Normalize by the
+                // actual window size; identity when the window is 1024x768.
+                let (win_w, win_h) = window.get_size();
+                let scale = |v: f32, win: usize, fb: usize| -> u32 {
+                    let scaled = if win > 0 && win != fb {
+                        v * fb as f32 / win as f32
+                    } else {
+                        v
+                    };
+                    (scaled as u32).min(fb as u32 - 1)
                 };
-                (scaled as u32).min(fb as u32 - 1)
-            };
-            let nx = scale_coord(mx, win_w, DISPLAY_WIDTH);
-            let ny = scale_coord(my, win_h, DISPLAY_HEIGHT);
-            let buttons = if window.get_mouse_down(minifb::MouseButton::Left) {
-                crate::constants::MOUSE_BUTTON_LEFT
-            } else {
-                0
-            };
+                let buttons = if window.get_mouse_down(minifb::MouseButton::Left) {
+                    crate::constants::MOUSE_BUTTON_LEFT
+                } else {
+                    0
+                };
+            Some((
+                scale(mx, win_w, DISPLAY_WIDTH),
+                scale(my, win_h, DISPLAY_HEIGHT),
+                buttons,
+            ))
+        });
+        if let Some(stats) = self.io_stats.as_mut() {
+            stats.mouse_read_ns += t_ms.elapsed().as_nanos();
+            stats.mouse_read_calls += 1;
+        }
+
+        if let Some((nx, ny, buttons)) = sampled {
             if self.mouse.update(nx, ny, buttons) {
                 self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
                 self.pending_irq = true;
@@ -171,7 +233,16 @@ impl Machine {
                     None => cap,
                 };
                 if !wait.is_zero() {
+                    let t = Instant::now();
                     std::thread::sleep(wait);
+                    if let Some(stats) = self.io_stats.as_mut() {
+                        let ns = t.elapsed().as_nanos();
+                        stats.wfi_sleep_ns += ns;
+                        stats.wfi_sleeps += 1;
+                        if ns > stats.wfi_sleep_max_ns {
+                            stats.wfi_sleep_max_ns = ns;
+                        }
+                    }
                 }
                 continue;
             }
@@ -210,6 +281,7 @@ impl Machine {
 
             self.execute_instruction(instruction)?;
             executed_steps = executed_steps.wrapping_add(1);
+            self.instrs_retired = self.instrs_retired.wrapping_add(1);
 
             // Feed the profiler after the instruction so program_counter and
             // link_register already reflect any jump/call it performed.

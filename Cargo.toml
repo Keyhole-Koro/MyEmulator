@@ -13,9 +13,13 @@ debug = true
 # X11 (DISPLAY=:0), which WSLg serves reliably. Re-enable "wayland" on a native
 # Wayland host if desired.
 minifb = { version = "0.27", default-features = false, features = ["x11"] }
+
+# Scan out frames via MIT-SHM instead of minifb's per-frame 3 MB socket blit.
+# See src/machine/shm_present.rs.
+x11-dl = "2.19"
+libc = "0.2"
 # For SIGINT/SIGTERM handling so Ctrl+C (or the harness killing the process) lets
 # the run loop exit cleanly and drop the minifb Window, which destroys the X11
 # window. Without this the process dies before Drop runs and the window is
 # orphaned by the X server.
-libc = "0.2"
 

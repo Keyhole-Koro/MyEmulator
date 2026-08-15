@@ -66,6 +66,26 @@ impl Machine {
                         self.maybe_refresh_display(false);
                         self.front.copy_from_slice(&self.vram);
                         self.swapped = true;
+                        let retired = self.instrs_retired;
+                        if let Some(stats) = self.io_stats.as_mut() {
+                            if stats.guest_swaps > 0 {
+                                let d = retired.saturating_sub(stats.instrs_at_last_swap);
+                                stats.instrs_per_frame_sum += d as u128;
+                                if d > stats.instrs_per_frame_max {
+                                    stats.instrs_per_frame_max = d;
+                                }
+                            }
+                            stats.instrs_at_last_swap = retired;
+                            stats.guest_swaps += 1;
+                            if let Some(prev) = stats.last_swap {
+                                let gap = prev.elapsed().as_nanos();
+                                stats.swap_gap_ns += gap;
+                                if gap > stats.swap_gap_max_ns {
+                                    stats.swap_gap_max_ns = gap;
+                                }
+                            }
+                            stats.last_swap = Some(std::time::Instant::now());
+                        }
                     }
                     return;
                 }
@@ -78,7 +98,48 @@ impl Machine {
                 }
                 crate::constants::MOUSE_EVT_POP_ADDR => {
                     if value != 0 {
-                        self.mouse.pop_event();
+                        let depth = self.mouse.queue_depth();
+                        let waited = self.mouse.pop_event();
+                        let dropped = self.mouse.dropped;
+                        if let Some(stats) = self.io_stats.as_mut() {
+                            stats.evt_queue_depth_sum += depth as u128;
+                            stats.evt_queue_samples += 1;
+                            if depth > stats.evt_queue_depth_max {
+                                stats.evt_queue_depth_max = depth;
+                            }
+                            stats.evt_dropped = dropped;
+                            if let Some(w) = waited {
+                                let ns = w.as_nanos();
+                                stats.evt_latency_ns += ns;
+                                stats.evt_latency_samples += 1;
+                                if ns > stats.evt_latency_max_ns {
+                                    stats.evt_latency_max_ns = ns;
+                                }
+                                // Print a line per second while events flow so
+                                // latency can be read off live during pointer
+                                // movement.
+                                stats.live_lat_ns += ns;
+                                stats.live_samples += 1;
+                                if ns > stats.live_lat_max_ns {
+                                    stats.live_lat_max_ns = ns;
+                                }
+                                let start = *stats.live_window_start
+                                    .get_or_insert_with(std::time::Instant::now);
+                                if start.elapsed().as_secs_f64() >= 1.0 {
+                                    eprintln!(
+                                        "[lag] {:>5} evt/s  avg {:>7.2} ms  worst {:>7.2} ms  fifo {}",
+                                        stats.live_samples,
+                                        stats.live_lat_ns as f64 / stats.live_samples as f64 / 1e6,
+                                        stats.live_lat_max_ns as f64 / 1e6,
+                                        depth
+                                    );
+                                    stats.live_window_start = Some(std::time::Instant::now());
+                                    stats.live_lat_ns = 0;
+                                    stats.live_lat_max_ns = 0;
+                                    stats.live_samples = 0;
+                                }
+                            }
+                        }
                     }
                     return;
                 }

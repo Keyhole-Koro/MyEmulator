@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::time::Instant;
 
 use crate::constants::MOUSE_EVENT_QUEUE_DEPTH;
 
@@ -9,13 +10,23 @@ pub struct MouseEvent {
     pub buttons: u32,
 }
 
+// An event plus when the host sampled it, so the time it spent waiting to be
+// consumed can be measured (see IoStats::evt_latency_ns).
+#[derive(Clone, Copy)]
+struct StampedEvent {
+    event: MouseEvent,
+    queued_at: Instant,
+}
+
 pub struct MouseDevice {
     pub x: u32,
     pub y: u32,
     pub buttons: u32,
     // Hardware event FIFO: one entry per observed change. On overflow the
     // oldest entry is dropped so the newest state is always retained.
-    events: VecDeque<MouseEvent>,
+    events: VecDeque<StampedEvent>,
+    // Set when the FIFO overflows so the caller can report drops.
+    pub dropped: u64,
 }
 
 impl MouseDevice {
@@ -25,6 +36,7 @@ impl MouseDevice {
             y: 0,
             buttons: 0,
             events: VecDeque::with_capacity(MOUSE_EVENT_QUEUE_DEPTH),
+            dropped: 0,
         }
     }
 
@@ -41,8 +53,12 @@ impl MouseDevice {
         self.buttons = buttons;
         if self.events.len() == MOUSE_EVENT_QUEUE_DEPTH {
             self.events.pop_front();
+            self.dropped += 1;
         }
-        self.events.push_back(MouseEvent { x, y, buttons });
+        self.events.push_back(StampedEvent {
+            event: MouseEvent { x, y, buttons },
+            queued_at: Instant::now(),
+        });
         true
     }
 
@@ -53,15 +69,22 @@ impl MouseDevice {
     // The head event. Reading an empty FIFO is a guest bug (EVT_STATUS said
     // nothing is queued); answering with the live state keeps it harmless.
     pub fn head_event(&self) -> MouseEvent {
-        self.events.front().copied().unwrap_or(MouseEvent {
+        self.events.front().map(|e| e.event).unwrap_or(MouseEvent {
             x: self.x,
             y: self.y,
             buttons: self.buttons,
         })
     }
 
-    pub fn pop_event(&mut self) {
-        self.events.pop_front();
+    // Pops the head event, returning how long it waited in the FIFO. That wait
+    // is the pointer-to-guest latency: the host samples into this queue on its
+    // own cadence, and the guest drains it when the compositor next runs.
+    pub fn pop_event(&mut self) -> Option<std::time::Duration> {
+        self.events.pop_front().map(|e| e.queued_at.elapsed())
+    }
+
+    pub fn queue_depth(&self) -> u32 {
+        self.events.len() as u32
     }
 }
 
