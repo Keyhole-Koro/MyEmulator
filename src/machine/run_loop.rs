@@ -28,7 +28,23 @@ impl Machine {
             // Scan out the front buffer once a program has swapped at least
             // once; otherwise present the back buffer directly so programs that
             // never double-buffer still show their drawing.
-            let scanout = if self.swapped { &self.front } else { &self.vram };
+            let base = if self.swapped { &self.front } else { &self.vram };
+            // Composite the hardware cursor over a copy of the frame. VRAM is
+            // left untouched, so the guest never has to erase the old sprite.
+            let scanout: &[u32] = if self.cursor_visible {
+                if self.cursor_frame.len() != base.len() {
+                    self.cursor_frame.resize(base.len(), 0);
+                }
+                self.cursor_frame.copy_from_slice(base);
+                draw_cursor_sprite(
+                    &mut self.cursor_frame,
+                    self.cursor_x as i32,
+                    self.cursor_y as i32,
+                );
+                &self.cursor_frame
+            } else {
+                base
+            };
             let t0 = Instant::now();
             match self.shm.as_mut() {
                 // Fast path: the server reads the frame out of shared memory,
@@ -90,6 +106,13 @@ impl Machine {
         // host XQueryPointer is a ~540 us round trip, so any per-2 ms X call is
         // too expensive. Getting sub-frame sampling back means having X push
         // motion events to us rather than polling it -- see MYOS-010.)
+        // The button must be sampled at the fast cadence: a click shorter than
+        // a frame has to reach the FIFO, and minifb only refreshes its cached
+        // button state inside update(). Ask the server directly instead --
+        // XQueryPointer is a round trip, but it runs only while a press is in
+        // flight or once per frame, not on every poll.
+        let button_now = self.shm.as_mut().and_then(|shm| shm.query_pointer());
+
         let pump_due = self.last_window_pump.elapsed()
             >= Duration::from_nanos(1_000_000_000 / DISPLAY_REFRESH_HZ);
 
@@ -107,7 +130,14 @@ impl Machine {
         }
 
         let t_ms = Instant::now();
-        let sampled = self.window.as_ref().and_then(|window| {
+        let sampled = match button_now {
+            // One round trip gives position and buttons together.
+            Some((x, y, left)) => Some((
+                x.clamp(0, DISPLAY_WIDTH as i32 - 1) as u32,
+                y.clamp(0, DISPLAY_HEIGHT as i32 - 1) as u32,
+                if left { crate::constants::MOUSE_BUTTON_LEFT } else { 0 },
+            )),
+            None => self.window.as_ref().and_then(|window| {
                 let (mx, my) = window.get_mouse_pos(minifb::MouseMode::Clamp)?;
                 // minifb reports raw window pixels. The WM may have scaled or
                 // resized the window (WSLg HiDPI stretches it), in which case
@@ -123,17 +153,26 @@ impl Machine {
                     };
                     (scaled as u32).min(fb as u32 - 1)
                 };
-                let buttons = if window.get_mouse_down(minifb::MouseButton::Left) {
-                    crate::constants::MOUSE_BUTTON_LEFT
-                } else {
-                    0
+                // Prefer the directly-queried button state; fall back to
+                // minifb's cache when there is no X connection of our own.
+                let buttons = match button_now {
+                    Some((_, _, true)) => crate::constants::MOUSE_BUTTON_LEFT,
+                    Some((_, _, false)) => 0,
+                    None => {
+                        if window.get_mouse_down(minifb::MouseButton::Left) {
+                            crate::constants::MOUSE_BUTTON_LEFT
+                        } else {
+                            0
+                        }
+                    }
                 };
-            Some((
-                scale(mx, win_w, DISPLAY_WIDTH),
-                scale(my, win_h, DISPLAY_HEIGHT),
-                buttons,
-            ))
-        });
+                Some((
+                    scale(mx, win_w, DISPLAY_WIDTH),
+                    scale(my, win_h, DISPLAY_HEIGHT),
+                    buttons,
+                ))
+            }),
+        };
         if let Some(stats) = self.io_stats.as_mut() {
             stats.mouse_read_ns += t_ms.elapsed().as_nanos();
             stats.mouse_read_calls += 1;
@@ -316,5 +355,51 @@ impl Machine {
         // ended before the next refresh interval.
         self.maybe_refresh_display(true);
         Ok(())
+    }
+}
+
+// The pointer sprite the display controller overlays: a small arrow with a
+// white edge so it stays visible on any background. Shape mirrors the outline
+// the guest used to draw for itself, but it is composited at scan-out and
+// costs the guest nothing.
+fn draw_cursor_sprite(frame: &mut [u32], hx: i32, hy: i32) {
+    const BLACK: u32 = 0x0000_0000;
+    const WHITE: u32 = 0x00FF_FFFF;
+    // Rows of the arrow, from the hotspot down. 1 = outline, 2 = fill.
+    const SPRITE: [&[u8]; 16] = [
+        b"1",
+        b"11",
+        b"121",
+        b"1221",
+        b"12221",
+        b"122221",
+        b"1222221",
+        b"12222221",
+        b"122222221",
+        b"1222222221",
+        b"12222111111",
+        b"122221",
+        b"1221221",
+        b"121 1221",
+        b"11   1221",
+        b"1     121",
+    ];
+    for (dy, row) in SPRITE.iter().enumerate() {
+        let y = hy + dy as i32;
+        if y < 0 || y >= DISPLAY_HEIGHT as i32 {
+            continue;
+        }
+        for (dx, cell) in row.iter().enumerate() {
+            let color = match cell {
+                b'1' => BLACK,
+                b'2' => WHITE,
+                _ => continue,
+            };
+            let x = hx + dx as i32;
+            if x < 0 || x >= DISPLAY_WIDTH as i32 {
+                continue;
+            }
+            frame[y as usize * DISPLAY_WIDTH + x as usize] = color;
+        }
     }
 }

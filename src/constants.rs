@@ -63,6 +63,20 @@ pub const DMA2D_CMD_ADDR: u32 = IO_BASE + 0x34; // W: 1 = fill_rect
 // back buffer is presented directly, so programs that never swap still render.
 pub const DISPLAY_SWAP_ADDR: u32 = IO_BASE + 0x38; // W: 1 = present back buffer
 
+// Hardware cursor. The display controller composites a small pointer sprite
+// over the scanned-out frame, so moving the pointer costs the guest a couple of
+// register writes instead of a repaint.
+//
+// Without it a guest that draws its own cursor must redraw the whole scene on
+// every pointer move just to erase the old arrow: measured at ~1.0 M guest
+// instructions per frame (~283 ms) for a scene that had not otherwise changed.
+// The sprite is drawn by the host, so it costs the guest nothing per frame and
+// is never captured by DISPLAY_SWAP (it is composited at scan-out, not stored
+// in VRAM).
+pub const CURSOR_X_ADDR: u32 = IO_BASE + 0x60; // W: hotspot x in display pixels
+pub const CURSOR_Y_ADDR: u32 = IO_BASE + 0x64; // W: hotspot y in display pixels
+pub const CURSOR_CTRL_ADDR: u32 = IO_BASE + 0x68; // W: bit0 = visible
+
 // Mouse device registers. The host pointer is sampled every ~2 ms (independent
 // of the 60 Hz display refresh); a change in position or button state raises an
 // IRQ (same shared vector as the timer/serial) and is also latched into the

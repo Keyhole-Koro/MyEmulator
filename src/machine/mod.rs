@@ -201,6 +201,14 @@ pub struct Machine {
     // server reads directly. None when MIT-SHM is unavailable (remote display,
     // no libXext), in which case scan-out falls back to minifb.
     shm: Option<ShmPresenter>,
+    // Hardware cursor state (CURSOR_* registers). Composited over the frame at
+    // scan-out, so it never lands in VRAM and costs the guest nothing to move.
+    cursor_x: u32,
+    cursor_y: u32,
+    cursor_visible: bool,
+    // Scratch frame: the scanned-out image with the cursor drawn on top. Kept
+    // as a field so a frame does not allocate.
+    cursor_frame: Vec<u32>,
     headless: bool,
     // Wall-clock time the display was last scanned out to the window. The
     // hardware display controller refreshes VRAM at a fixed rate regardless of
@@ -300,6 +308,10 @@ impl Machine {
             swapped: false,
             window,
             shm,
+            cursor_x: 0,
+            cursor_y: 0,
+            cursor_visible: false,
+            cursor_frame: Vec::new(),
             headless,
             last_frame: Instant::now(),
             last_input_poll: Instant::now(),

@@ -61,6 +61,18 @@ impl Machine {
                     self.service_dma2d(value);
                     return;
                 }
+                crate::constants::CURSOR_X_ADDR => {
+                    self.cursor_x = value;
+                    return;
+                }
+                crate::constants::CURSOR_Y_ADDR => {
+                    self.cursor_y = value;
+                    return;
+                }
+                crate::constants::CURSOR_CTRL_ADDR => {
+                    self.cursor_visible = value & 1 != 0;
+                    return;
+                }
                 crate::constants::DISPLAY_SWAP_ADDR => {
                     if value != 0 {
                         self.maybe_refresh_display(false);
