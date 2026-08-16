@@ -21,7 +21,11 @@ impl TimerDevice {
 
     // Set the tick period from a microsecond count (the CLI's --timer-interval).
     pub fn set_period_micros(&mut self, micros: u64) {
-        self.period = Some(Duration::from_micros(micros));
+        if micros == 0 {
+            self.period = None;
+        } else {
+            self.period = Some(Duration::from_micros(micros));
+        }
         self.last_fire = Instant::now();
     }
 
@@ -83,6 +87,7 @@ mod tests {
     #[test]
     fn disabled_timer_never_fires() {
         let mut t = TimerDevice::new();
+        t.set_period_micros(0);
         assert!(!t.service());
         assert!(t.time_until_next().is_none());
     }

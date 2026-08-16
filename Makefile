@@ -67,5 +67,11 @@ gdb: $(TARGET)
 test:
 	$(CARGO) test
 
+test-component: test
+
+test-e2e:
+
+test-all: test-component test-e2e
+
 clean:
 	$(CARGO) clean
