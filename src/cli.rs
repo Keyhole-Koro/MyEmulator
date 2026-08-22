@@ -12,6 +12,9 @@ pub struct Args {
     pub print_regs: bool,
     pub mem_range: Option<(u32, u32)>,
     pub headless: bool,
+    // MYOS-004: run headless and drive the machine from JSON Lines commands on
+    // stdin instead of executing to completion. See control_stdio.rs.
+    pub control_stdio: bool,
     pub disk_file: Option<String>,
     // When set, collect an instruction-level profile and write it as JSON here.
     pub profile_out: Option<String>,
@@ -54,6 +57,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut print_regs = false;
     let mut mem_range = None;
     let mut headless = false;
+    let mut control_stdio = false;
     let mut disk_file = None;
     let mut profile_out = None;
     let mut timer_interval = None;
@@ -117,6 +121,12 @@ pub fn parse_args() -> Result<Args, String> {
             "--headless" => {
                 headless = true;
             }
+            "--control-stdio" => {
+                // Implies --headless: there is no window to drive by hand once
+                // a client is talking to the machine over stdio.
+                headless = true;
+                control_stdio = true;
+            }
             "--io-stats" => {
                 io_stats = true;
             }
@@ -160,6 +170,7 @@ pub fn parse_args() -> Result<Args, String> {
         print_regs,
         mem_range,
         headless,
+        control_stdio,
         disk_file,
         profile_out,
         timer_interval,

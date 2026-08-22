@@ -37,9 +37,10 @@ impl Machine {
 
     // Queue received bytes and raise an IRQ so the kernel's handler runs
     // (independent of the timer). Split out from polling so it is testable
-    // without the stdin thread.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn ingest_serial_bytes(&mut self, bytes: &[u8]) {
+    // without the stdin thread; control_stdio.rs also uses this directly to
+    // inject synthetic keystrokes (e.g. typing "dom\r" at the shell) without
+    // going through the raw-stdin-forwarding thread.
+    pub fn ingest_serial_bytes(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
@@ -58,9 +59,9 @@ impl Machine {
 
     // Update mouse state as if sampled from the host window, raising an IRQ on
     // any change (mirrors the real per-frame polling). Split out so it is
-    // testable without a window.
-    #[cfg(test)]
-    pub(super) fn set_mouse_state(&mut self, x: u32, y: u32, buttons: u32) {
+    // testable without a window; control_stdio.rs also calls this directly to
+    // inject mouse.move/down/up commands in place of host window sampling.
+    pub fn set_mouse_state(&mut self, x: u32, y: u32, buttons: u32) {
         use crate::constants::IRQ_CAUSE_MOUSE;
         if self.mouse.update(x, y, buttons) {
             self.irq_cause |= IRQ_CAUSE_MOUSE;

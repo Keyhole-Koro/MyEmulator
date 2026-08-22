@@ -1,4 +1,5 @@
 use crate::cli::parse_args;
+use crate::control_stdio;
 use crate::loader::read_binary_file;
 use crate::machine::{DebugOptions, Machine};
 use std::path::PathBuf;
@@ -31,6 +32,14 @@ pub fn run() -> Result<(), String> {
     let start_address = 0x0000_0000;
     machine.load_program(&binary, start_address);
     machine.set_instruction_pointer(start_address);
+
+    // MYOS-004: control-stdio mode drives the machine from JSON Lines commands
+    // on stdin instead of running it to completion, so it exits here rather
+    // than falling through to the register-dump/report flow below (that
+    // report describes a halted machine, which this one never becomes).
+    if args.control_stdio {
+        return control_stdio::run(&mut machine);
+    }
 
     // Enable profiling before execution so the call graph is rooted at the entry
     // point and every retired instruction is counted.

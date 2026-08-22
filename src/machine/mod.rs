@@ -230,6 +230,11 @@ pub struct Machine {
     registers: [u32; 8],
     verbose: bool,
     serial_log: Option<File>,
+    // every byte transmitted over serial (mirrors what serial_log
+    // would hold), for control_stdio.rs to drain and scan for the DOM
+    // snapshot markers without re-reading a file. Unused otherwise -- cheap
+    // to always fill in, so no headless/control_stdio gate is needed.
+    serial_tx_buf: Vec<u8>,
     trace_log: Option<File>,
     // Instruction-level profiler. None unless --profile is passed; when present
     // the run loop and memory bus feed it one event per instruction/access.
@@ -321,6 +326,7 @@ impl Machine {
             registers: [0; 8],
             verbose,
             serial_log: None,
+            serial_tx_buf: Vec::new(),
             trace_log: None,
             profiler: None,
             stack_pointer: RAM_END_EXCLUSIVE,

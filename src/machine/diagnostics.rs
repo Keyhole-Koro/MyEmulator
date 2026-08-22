@@ -15,6 +15,38 @@ impl Machine {
         Ok(())
     }
 
+    // MYOS-004: dump the current scanout buffer (front if the guest has
+    // swapped at least once, else the back buffer -- mirrors
+    // maybe_refresh_display's choice) as a binary PPM (P6). Plain PPM rather
+    // than PNG: no image-encoding crate is vendored, and P6 needs none --
+    // just a header and raw RGB bytes, trivially converted with any image
+    // tool if a client wants PNG.
+    pub fn write_ppm_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+
+        let base: &[u32] = if self.swapped { &self.front } else { &self.vram };
+        let mut out = File::create(&path).map_err(|e| {
+            format!("Unable to open screenshot {}: {}", path.as_ref().display(), e)
+        })?;
+        write!(out, "P6\n{} {}\n255\n", DISPLAY_WIDTH, DISPLAY_HEIGHT).map_err(|e| e.to_string())?;
+        let mut rgb = Vec::with_capacity(DISPLAY_WIDTH * DISPLAY_HEIGHT * 3);
+        for &pixel in base.iter().take(DISPLAY_WIDTH * DISPLAY_HEIGHT) {
+            // 0x00RRGGBB, matching graphics.rgb() in the guest UI package.
+            rgb.push(((pixel >> 16) & 0xFF) as u8);
+            rgb.push(((pixel >> 8) & 0xFF) as u8);
+            rgb.push((pixel & 0xFF) as u8);
+        }
+        out.write_all(&rgb).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // MYOS-004: take everything transmitted over serial since the last drain.
+    // control_stdio.rs uses this to scan for the DOM snapshot markers without
+    // needing a separate response channel from the guest.
+    pub fn drain_serial_tx(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.serial_tx_buf)
+    }
+
     pub fn set_trace_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path_ref = path.as_ref();
         self.trace_log = Some(File::create(path_ref).map_err(|e| {
