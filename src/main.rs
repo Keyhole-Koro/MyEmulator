@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod constants;
+mod control_stdio;
 mod instruction;
 mod loader;
 mod machine;

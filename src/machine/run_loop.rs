@@ -185,6 +185,64 @@ impl Machine {
             }
         }
     }
+    // MYOS-004: advance the machine for up to max_instructions (or until it
+    // halts, or a wall-clock safety cap elapses, whichever comes first) and
+    // return. Used by control_stdio.rs to give the guest a chance to react to
+    // an injected input (mouse event, "dom" keystroke) between commands.
+    //
+    // This mirrors execute_with_debug's core loop (poll devices, dispatch
+    // IRQs, execute, sleep through WFI) but skips everything control_stdio
+    // has no use for -- trace/profiler/breakpoint handling and the [STEP]
+    // status prints, which would otherwise land on the same stdout the
+    // client is reading command responses from. It intentionally does NOT
+    // call start_serial_input: control_stdio owns stdin itself and injects
+    // bytes via ingest_serial_bytes instead of the raw-forwarding thread.
+    pub fn run_frame_budget(&mut self, max_instructions: u64) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let mut executed = 0u64;
+        let mut batch_counter = 0u64;
+        const BATCH_SIZE: u64 = 1_000;
+
+        while !self.halted && executed < max_instructions {
+            if Instant::now() >= deadline {
+                break;
+            }
+
+            batch_counter += 1;
+            if batch_counter >= BATCH_SIZE || self.waiting_for_interrupt {
+                batch_counter = 0;
+                self.poll_devices();
+                self.poll_input(); // no-op headless
+                if !self.maybe_refresh_display(false) {
+                    self.halted = true;
+                    break;
+                }
+            }
+
+            self.try_dispatch_irq()?;
+
+            if self.waiting_for_interrupt {
+                let cap = Duration::from_millis(4);
+                let wait = match self.timer.time_until_next() {
+                    Some(until_tick) => until_tick.min(cap),
+                    None => cap,
+                };
+                if !wait.is_zero() {
+                    std::thread::sleep(wait);
+                }
+                continue;
+            }
+
+            let instruction = self.bus_read(self.program_counter);
+            self.program_counter = self.program_counter.wrapping_add(4);
+            self.execute_instruction(instruction)?;
+            executed += 1;
+            self.instrs_retired = self.instrs_retired.wrapping_add(1);
+        }
+
+        Ok(())
+    }
+
     pub fn set_instruction_pointer(&mut self, address: u32) {
         self.program_counter = address;
     }
