@@ -233,7 +233,10 @@ impl Machine {
                 continue;
             }
 
-            let instruction = self.bus_read(self.program_counter);
+            let instruction = match self.fetch_instruction() {
+                Ok(inst) => inst,
+                Err(()) => continue,
+            };
             self.program_counter = self.program_counter.wrapping_add(4);
             self.execute_instruction(instruction)?;
             executed += 1;
@@ -344,7 +347,10 @@ impl Machine {
                 continue;
             }
 
-            let instruction = self.bus_read(self.program_counter);
+            let instruction = match self.fetch_instruction() {
+                Ok(inst) => inst,
+                Err(()) => continue,
+            };
             self.program_counter = self.program_counter.wrapping_add(4);
 
             // Opcode is needed for both the trace print and the profiler; decode

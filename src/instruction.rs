@@ -5,7 +5,7 @@ pub enum Opcode {
     Add = 0x05, Addis = 0x19, Sub = 0x06, Cmp = 0x07, And = 0x08, Or = 0x09, Xor = 0x0A,
     Shl = 0x0B, Shr = 0x0C, Jmp = 0x0D, Jz = 0x0E, Jnz = 0x0F, Jg = 0x10, Jl = 0x11,
     Ja = 0x12, Jb = 0x13, Call = 0x1B, Push = 0x14, Pop = 0x15, In = 0x16, Out = 0x17,
-    Debug = 0x1A, Ei = 0x1E, Di = 0x1F, Iret = 0x20, Wfi = 0x21, Halt = 0x3F,
+    Debug = 0x1A, Ei = 0x1E, Di = 0x1F, Iret = 0x20, Wfi = 0x21, Syscall = 0x3E, Halt = 0x3F,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -23,6 +23,7 @@ impl TryFrom<u8> for Opcode {
             0x14 => Ok(Opcode::Push), 0x15 => Ok(Opcode::Pop), 0x16 => Ok(Opcode::In),
             0x17 => Ok(Opcode::Out), 0x1A => Ok(Opcode::Debug), 0x1E => Ok(Opcode::Ei),
             0x1F => Ok(Opcode::Di), 0x20 => Ok(Opcode::Iret), 0x21 => Ok(Opcode::Wfi),
+            0x3E => Ok(Opcode::Syscall),
             0x3F => Ok(Opcode::Halt),
             _ => Err(val),
         }
@@ -112,6 +113,7 @@ pub fn mnemonic(opcode: u8) -> &'static str {
         0x1F => "DI",
         0x20 => "IRET",
         0x21 => "WFI",
+        0x3E => "SYSCALL",
         0x3F => "HALT",
         _ => "UNKNOWN",
     }

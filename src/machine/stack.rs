@@ -57,7 +57,7 @@ impl Machine {
             ));
         }
 
-        let value = self.bus_read(self.stack_pointer);
+        let value = self.bus_load(self.stack_pointer);
         self.stack_pointer = self.stack_pointer.wrapping_add(4);
         Ok(value)
     }

@@ -25,14 +25,14 @@ make -C runtime/MyEmulator mem-myemu IN=<program.mbin> MEM_ADDR=0x00000000 MEM_L
 Run a MyLang program end-to-end:
 
 ```bash
-python3 qa/run_mylang.py toolchain/MyLangCompiler/tests/succeed/function/simpleFunc.mln --reg R1
+python3 qa/runners/run_mylang.py toolchain/MyLangCompiler/tests/succeed/function/simpleFunc.mln --reg R1
 ```
 
 Debug session logs:
 
 ```bash
-python3 qa/run_mylang.py toolchain/MyLangCompiler/tests/succeed/function/simpleFunc.mln --trace --mem 0x0 64
-python3 qa/run_kernel.py --trace
+python3 qa/runners/run_mylang.py toolchain/MyLangCompiler/tests/succeed/function/simpleFunc.mln --trace --mem 0x0 64
+python3 qa/runners/run_kernel.py --trace
 ```
 
 Each run writes a session directory with:
@@ -44,7 +44,7 @@ Each run writes a session directory with:
 Run the bundled MyLang serial-debug sample:
 
 ```bash
-python3 qa/run_mylang.py runtime/MyEmulator/examples/mylang_debug --masm --reg R1
+python3 qa/runners/run_mylang.py runtime/MyEmulator/examples/mylang_debug --masm --reg R1
 ```
 
 Useful debug notes:
