@@ -20,6 +20,9 @@ struct TlbEntry {
     vpn: u32,
     pfn: u32,
     flags: u32,
+    // The hardware updates A/D bits in the page-table entry even after the
+    // translation itself is cached in the TLB.
+    pte_addr: usize,
     valid: bool,
 }
 
@@ -93,12 +96,13 @@ impl Mmu {
     }
 
     #[inline]
-    fn tlb_insert(&mut self, vpn: u32, pfn: u32, flags: u32) {
+    fn tlb_insert(&mut self, vpn: u32, pfn: u32, flags: u32, pte_addr: usize) {
         let idx = (vpn as usize) % TLB_SIZE;
         self.tlb[idx] = TlbEntry {
             vpn,
             pfn,
             flags,
+            pte_addr,
             valid: true,
         };
     }
@@ -118,7 +122,7 @@ impl Mmu {
         let offset = vaddr & (PAGE_SIZE - 1);
 
         // Check TLB cache
-        if let Some(entry) = self.tlb_lookup(vpn) {
+        if let Some(entry) = self.tlb_lookup(vpn).copied() {
             let flags = entry.flags;
             // Check User permission
             if is_user && (flags & PTE_USER == 0) {
@@ -143,6 +147,23 @@ impl Mmu {
                 };
                 self.record_fault(fault);
                 return Err(fault);
+            }
+
+            // A TLB hit must preserve the same PTE side effects as a page
+            // table walk. In particular, a read followed by a write must set
+            // Dirty in RAM even though the latter access is cached.
+            let updated_flags = flags
+                | PTE_ACCESSED
+                | if access == AccessType::Write {
+                    PTE_DIRTY
+                } else {
+                    0
+                };
+            if updated_flags != flags {
+                ram[entry.pte_addr..entry.pte_addr + 4]
+                    .copy_from_slice(&updated_flags.to_be_bytes());
+                let idx = (vpn as usize) % TLB_SIZE;
+                self.tlb[idx].flags = updated_flags;
             }
 
             return Ok(entry.pfn | offset);
@@ -246,7 +267,7 @@ impl Mmu {
         ram[pte_addr..pte_addr + 4].copy_from_slice(&pte_bytes);
 
         let pfn = pte & 0xFFFF_F000;
-        self.tlb_insert(vpn, pfn, pte);
+        self.tlb_insert(vpn, pfn, pte, pte_addr);
 
         Ok(pfn | offset)
     }
@@ -309,6 +330,17 @@ mod tests {
             .translate(&mut ram, 0x10048, AccessType::Write, true)
             .expect("write should succeed");
         assert_eq!(paddr_w, 0x50048);
+        let updated_pte = u32::from_be_bytes([
+            ram[pte_addr],
+            ram[pte_addr + 1],
+            ram[pte_addr + 2],
+            ram[pte_addr + 3],
+        ]);
+        assert_ne!(
+            updated_pte & PTE_DIRTY,
+            0,
+            "a TLB-hit write marks the PTE dirty"
+        );
     }
 
     #[test]

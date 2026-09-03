@@ -2,10 +2,7 @@ use std::io::Read;
 use std::sync::mpsc;
 use std::thread;
 
-use crate::constants::{
-    is_ram_address, IRQ_VECTOR_ADDR, SR_IE,
-    IRQ_CAUSE_TIMER, IRQ_CAUSE_SERIAL
-};
+use crate::constants::{is_ram_address, IRQ_CAUSE_SERIAL, IRQ_CAUSE_TIMER, IRQ_VECTOR_ADDR, SR_IE};
 
 use super::Machine;
 
@@ -129,11 +126,11 @@ impl Machine {
     // instruction) costs nothing measurable.
     #[inline]
     pub(super) fn try_dispatch_irq(&mut self) -> Result<(), String> {
-        let is_sync_trap = (self.irq_cause & (
-            crate::constants::IRQ_CAUSE_SYSCALL
-            | crate::constants::IRQ_CAUSE_PAGE_FAULT
-            | crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION
-        )) != 0;
+        let is_sync_trap = (self.irq_cause
+            & (crate::constants::IRQ_CAUSE_SYSCALL
+                | crate::constants::IRQ_CAUSE_PAGE_FAULT
+                | crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION))
+            != 0;
 
         if (self.interrupt_enable || is_sync_trap) && self.pending_irq {
             let vector = self.bus_read_physical(IRQ_VECTOR_ADDR);
@@ -147,18 +144,24 @@ impl Machine {
 
                 let was_user = self.is_user_mode();
                 if was_user {
-                    let user_sp = self.stack_pointer;
-                    self.stack_pointer = self.mmu.kernel_sp;
-                    self.mmu.kernel_sp = user_sp;
+                    std::mem::swap(&mut self.stack_pointer, &mut self.mmu.kernel_sp);
                 }
 
                 self.push(self.program_counter)?;
-                
+
                 let mut sr = self.status_register;
-                if self.carry_flag { sr |= crate::constants::SR_CARRY; }
-                if self.zero_flag { sr |= crate::constants::SR_ZERO; }
-                if self.sign_flag { sr |= crate::constants::SR_SIGN; }
-                if self.overflow_flag { sr |= crate::constants::SR_OVERFLOW; }
+                if self.carry_flag {
+                    sr |= crate::constants::SR_CARRY;
+                }
+                if self.zero_flag {
+                    sr |= crate::constants::SR_ZERO;
+                }
+                if self.sign_flag {
+                    sr |= crate::constants::SR_SIGN;
+                }
+                if self.overflow_flag {
+                    sr |= crate::constants::SR_OVERFLOW;
+                }
                 self.push(sr)?;
                 // Switch to kernel mode and disable further interrupts until the handler re-enables them
                 self.status_register &= !crate::constants::SR_USER;
@@ -207,7 +210,11 @@ mod tests {
             0,
             "data-ready clears once drained"
         );
-        assert_eq!(m.bus_load(SERIAL_RX_ADDR), 0, "reading an empty RX yields 0");
+        assert_eq!(
+            m.bus_load(SERIAL_RX_ADDR),
+            0,
+            "reading an empty RX yields 0"
+        );
     }
 
     #[test]
@@ -225,7 +232,11 @@ mod tests {
         let mut m = Machine::new(false, true);
         m.ingest_serial_bytes(b"Z");
         let _ = m.bus_read(SERIAL_RX_ADDR);
-        assert_eq!(m.bus_load(SERIAL_RX_ADDR), u32::from(b'Z'), "byte still there");
+        assert_eq!(
+            m.bus_load(SERIAL_RX_ADDR),
+            u32::from(b'Z'),
+            "byte still there"
+        );
     }
 
     #[test]
@@ -237,7 +248,10 @@ mod tests {
         m.ingest_serial_bytes(b"z");
         m.try_dispatch_irq().unwrap();
         assert_eq!(m.program_counter, handler, "PC vectored to the handler");
-        assert!(!m.interrupt_enable, "interrupts masked entering the handler");
+        assert!(
+            !m.interrupt_enable,
+            "interrupts masked entering the handler"
+        );
     }
 
     #[test]
@@ -262,7 +276,10 @@ mod tests {
             ..Default::default()
         };
         m.execute_with_debug(opts).unwrap();
-        assert!(m.halted, "the handler's HALT ran as the very next instruction");
+        assert!(
+            m.halted,
+            "the handler's HALT ran as the very next instruction"
+        );
     }
 
     #[test]

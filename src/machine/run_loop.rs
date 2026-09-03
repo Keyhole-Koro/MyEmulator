@@ -1,8 +1,8 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
+use crate::constants::{DISPLAY_HEIGHT, DISPLAY_REFRESH_HZ, DISPLAY_WIDTH};
 use crate::instruction::{decode_instruction, mnemonic};
-use crate::constants::{DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_REFRESH_HZ};
 
 use super::{DebugOptions, Machine};
 
@@ -28,7 +28,11 @@ impl Machine {
             // Scan out the front buffer once a program has swapped at least
             // once; otherwise present the back buffer directly so programs that
             // never double-buffer still show their drawing.
-            let base = if self.swapped { &self.front } else { &self.vram };
+            let base = if self.swapped {
+                &self.front
+            } else {
+                &self.vram
+            };
             // Composite the hardware cursor over a copy of the frame. VRAM is
             // left untouched, so the guest never has to erase the old sprite.
             let scanout: &[u32] = if self.cursor_visible {
@@ -135,7 +139,11 @@ impl Machine {
             Some((x, y, left)) => Some((
                 x.clamp(0, DISPLAY_WIDTH as i32 - 1) as u32,
                 y.clamp(0, DISPLAY_HEIGHT as i32 - 1) as u32,
-                if left { crate::constants::MOUSE_BUTTON_LEFT } else { 0 },
+                if left {
+                    crate::constants::MOUSE_BUTTON_LEFT
+                } else {
+                    0
+                },
             )),
             None => self.window.as_ref().and_then(|window| {
                 let (mx, my) = window.get_mouse_pos(minifb::MouseMode::Clamp)?;
@@ -319,7 +327,10 @@ impl Machine {
                 // reaching the step limit (WFI executes no instructions), so
                 // report the idle state and pause instead.
                 if options.step_count.is_some() {
-                    println!("[STEP] CPU idle (WFI) after {} instruction(s)", executed_steps);
+                    println!(
+                        "[STEP] CPU idle (WFI) after {} instruction(s)",
+                        executed_steps
+                    );
                     self.print_registers();
                     return Ok(());
                 }

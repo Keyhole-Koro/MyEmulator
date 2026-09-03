@@ -1,9 +1,11 @@
+use minifb::{Window, WindowOptions};
 use std::collections::HashMap;
 use std::fs::File;
 use std::time::Instant;
-use minifb::{Window, WindowOptions};
 
-use crate::constants::{RAM_END_EXCLUSIVE, RAM_SIZE, RAM_START, DISPLAY_WIDTH, DISPLAY_HEIGHT, VRAM_SIZE};
+use crate::constants::{
+    DISPLAY_HEIGHT, DISPLAY_WIDTH, RAM_END_EXCLUSIVE, RAM_SIZE, RAM_START, VRAM_SIZE,
+};
 
 mod cpu_exec;
 mod diagnostics;
@@ -95,7 +97,11 @@ pub struct IoStats {
 
 impl IoStats {
     fn avg_us(total_ns: u128, calls: u64) -> f64 {
-        if calls == 0 { 0.0 } else { total_ns as f64 / calls as f64 / 1000.0 }
+        if calls == 0 {
+            0.0
+        } else {
+            total_ns as f64 / calls as f64 / 1000.0
+        }
     }
 
     pub fn report(&self) {
@@ -128,7 +134,11 @@ impl IoStats {
             eprintln!(
                 "  scan-out interval    {:>8.2} ms avg ({:.1} fps)   {:.2} ms worst",
                 avg_gap_ms,
-                if avg_gap_ms > 0.0 { 1000.0 / avg_gap_ms } else { 0.0 },
+                if avg_gap_ms > 0.0 {
+                    1000.0 / avg_gap_ms
+                } else {
+                    0.0
+                },
                 self.scanout_gap_max_ns as f64 / 1e6
             );
         }
@@ -281,7 +291,8 @@ impl Machine {
                 DISPLAY_WIDTH,
                 DISPLAY_HEIGHT,
                 WindowOptions::default(),
-            ).unwrap_or_else(|e| {
+            )
+            .unwrap_or_else(|e| {
                 panic!("{}", e);
             });
             // We gate scan-out ourselves on wall-clock time (see

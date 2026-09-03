@@ -1,20 +1,21 @@
 use std::io::{self, Write};
 
 use crate::constants::{
-    is_io_address, is_ram_address, is_vram_address, VRAM_BASE,
-    SERIAL_LSR_ADDR, SERIAL_RX_ADDR,
-    SERIAL_TX_ADDR,
-    SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR,
-    IRQ_CAUSE_ADDR,
-    MMU_CTRL_ADDR, MMU_PDBR_ADDR, MMU_FAULT_ADDR, MMU_FAULT_STATUS_ADDR, KERNEL_SP_ADDR,
-    IRQ_CAUSE_PAGE_FAULT, IRQ_CAUSE_PRIVILEGE_VIOLATION,
+    is_io_address, is_ram_address, is_vram_address, IRQ_CAUSE_ADDR, IRQ_CAUSE_PAGE_FAULT,
+    IRQ_CAUSE_PRIVILEGE_VIOLATION, KERNEL_SP_ADDR, MMU_CTRL_ADDR, MMU_FAULT_ADDR,
+    MMU_FAULT_STATUS_ADDR, MMU_PDBR_ADDR, SERIAL_LSR_ADDR, SERIAL_RX_ADDR, SERIAL_TX_ADDR,
+    SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR, VRAM_BASE,
 };
 use crate::machine::mmu::{AccessType, MmuFault};
 
 use super::Machine;
 
 impl Machine {
-    pub(super) fn translate_addr(&mut self, vaddr: u32, access: AccessType) -> Result<u32, MmuFault> {
+    pub(super) fn translate_addr(
+        &mut self,
+        vaddr: u32,
+        access: AccessType,
+    ) -> Result<u32, MmuFault> {
         let is_user = self.is_user_mode();
         self.mmu.translate(&mut self.ram, vaddr, access, is_user)
     }
@@ -211,7 +212,8 @@ impl Machine {
                                 if ns > stats.live_lat_max_ns {
                                     stats.live_lat_max_ns = ns;
                                 }
-                                let start = *stats.live_window_start
+                                let start = *stats
+                                    .live_window_start
                                     .get_or_insert_with(std::time::Instant::now);
                                 if start.elapsed().as_secs_f64() >= 1.0 {
                                     stats.live_window_start = Some(std::time::Instant::now());
@@ -248,7 +250,7 @@ impl Machine {
         if is_ram_address(address) {
             return self.ram_read_word(address);
         }
-        
+
         if crate::constants::is_rom_address(address) {
             let offset = (address - crate::constants::ROM_START) as usize;
             if offset + 3 < self.rom.len() {
@@ -419,12 +421,27 @@ impl Machine {
 
     fn service_dma2d(&mut self, cmd: u32) {
         if cmd == 1 {
-            let dest = *self.io.get(&crate::constants::DMA2D_DEST_ADDR).unwrap_or(&0);
-            let color = *self.io.get(&crate::constants::DMA2D_COLOR_ADDR).unwrap_or(&0);
-            let width = *self.io.get(&crate::constants::DMA2D_WIDTH_ADDR).unwrap_or(&0);
-            let height = *self.io.get(&crate::constants::DMA2D_HEIGHT_ADDR).unwrap_or(&0);
-            let stride = *self.io.get(&crate::constants::DMA2D_STRIDE_ADDR).unwrap_or(&(crate::constants::DISPLAY_WIDTH as u32));
-            
+            let dest = *self
+                .io
+                .get(&crate::constants::DMA2D_DEST_ADDR)
+                .unwrap_or(&0);
+            let color = *self
+                .io
+                .get(&crate::constants::DMA2D_COLOR_ADDR)
+                .unwrap_or(&0);
+            let width = *self
+                .io
+                .get(&crate::constants::DMA2D_WIDTH_ADDR)
+                .unwrap_or(&0);
+            let height = *self
+                .io
+                .get(&crate::constants::DMA2D_HEIGHT_ADDR)
+                .unwrap_or(&0);
+            let stride = *self
+                .io
+                .get(&crate::constants::DMA2D_STRIDE_ADDR)
+                .unwrap_or(&(crate::constants::DISPLAY_WIDTH as u32));
+
             if dest >= crate::constants::VRAM_BASE {
                 let start_idx = (dest - crate::constants::VRAM_BASE) as usize / 4;
                 let w = width as usize;

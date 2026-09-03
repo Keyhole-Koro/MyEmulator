@@ -77,16 +77,17 @@ impl ShmPresenter {
             let xlib = xlib::Xlib::open().ok()?;
 
             // The XShm* entry points live in libXext, not libX11.
-            let libxext = libc::dlopen(
-                b"libXext.so.6\0".as_ptr() as *const c_char,
-                libc::RTLD_LAZY,
-            );
+            let libxext = libc::dlopen(c"libXext.so.6".as_ptr(), libc::RTLD_LAZY);
             if libxext.is_null() {
                 return None;
             }
             let sym = |name: &[u8]| -> Option<*mut c_void> {
                 let p = libc::dlsym(libxext, name.as_ptr() as *const c_char);
-                if p.is_null() { None } else { Some(p) }
+                if p.is_null() {
+                    None
+                } else {
+                    Some(p)
+                }
             };
             let query: QueryFn = std::mem::transmute(sym(b"XShmQueryExtension\0")?);
             let create: CreateFn = std::mem::transmute(sym(b"XShmCreateImage\0")?);

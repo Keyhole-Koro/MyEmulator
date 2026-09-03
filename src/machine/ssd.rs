@@ -62,6 +62,9 @@ impl SsdDevice {
             .read(true)
             .write(true)
             .create(true)
+            // Preserve existing disk-image contents; only set_len extends a
+            // short image to the emulated capacity.
+            .truncate(false)
             .open(&path)
             .map_err(|e| format!("failed to open disk image {}: {}", path.display(), e))?;
 
@@ -250,7 +253,11 @@ mod tests {
 
     fn machine_with_disk(name: &str) -> (Machine, std::path::PathBuf) {
         let mut path = std::env::temp_dir();
-        path.push(format!("myemu-ssd-test-{}-{}.img", name, std::process::id()));
+        path.push(format!(
+            "myemu-ssd-test-{}-{}.img",
+            name,
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         let mut m = Machine::new(false, true);
         m.load_disk(path.clone()).unwrap();
@@ -274,7 +281,11 @@ mod tests {
         assert!(!m.pending_irq, "no IRQ before the transfer completes");
         m.poll_devices();
         assert_eq!(m.bus_read(SSD_STATUS_ADDR), SSD_STATUS_DONE);
-        assert_ne!(m.irq_cause & IRQ_CAUSE_SSD, 0, "completion raises the SSD cause");
+        assert_ne!(
+            m.irq_cause & IRQ_CAUSE_SSD,
+            0,
+            "completion raises the SSD cause"
+        );
         assert!(m.pending_irq);
 
         // Read it back into a different RAM buffer.
@@ -286,7 +297,11 @@ mod tests {
         assert_eq!(m.bus_read(SSD_STATUS_ADDR), SSD_STATUS_BUSY);
         m.poll_devices();
         assert_eq!(m.bus_read(SSD_STATUS_ADDR), SSD_STATUS_DONE);
-        assert_eq!(m.bus_read(0x2000), 0xDEAD_BEEF, "block round-trips through the disk");
+        assert_eq!(
+            m.bus_read(0x2000),
+            0xDEAD_BEEF,
+            "block round-trips through the disk"
+        );
 
         let _ = std::fs::remove_file(&path);
     }

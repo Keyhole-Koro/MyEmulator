@@ -155,7 +155,11 @@ fn extract_snapshot(captured: &[u8]) -> Option<String> {
         return None;
     }
     let body = &text[begin + SNAPSHOT_BEGIN.len()..end];
-    let lines: Vec<&str> = body.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     Some(lines.join(","))
 }
 
