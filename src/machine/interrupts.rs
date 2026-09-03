@@ -129,8 +129,14 @@ impl Machine {
     // instruction) costs nothing measurable.
     #[inline]
     pub(super) fn try_dispatch_irq(&mut self) -> Result<(), String> {
-        if self.interrupt_enable && self.pending_irq {
-            let vector = self.bus_read(IRQ_VECTOR_ADDR);
+        let is_sync_trap = (self.irq_cause & (
+            crate::constants::IRQ_CAUSE_SYSCALL
+            | crate::constants::IRQ_CAUSE_PAGE_FAULT
+            | crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION
+        )) != 0;
+
+        if (self.interrupt_enable || is_sync_trap) && self.pending_irq {
+            let vector = self.bus_read_physical(IRQ_VECTOR_ADDR);
             // Guard against an unregistered vector. The handler lives in RAM, so
             // a vector outside RAM (0, or the 0xFFFF_FFFF an unmapped I/O slot
             // reads back) means "no handler installed": leave the IRQ pending so
@@ -138,6 +144,14 @@ impl Machine {
             if is_ram_address(vector) {
                 self.pending_irq = false;
                 self.waiting_for_interrupt = false;
+
+                let was_user = self.is_user_mode();
+                if was_user {
+                    let user_sp = self.stack_pointer;
+                    self.stack_pointer = self.mmu.kernel_sp;
+                    self.mmu.kernel_sp = user_sp;
+                }
+
                 self.push(self.program_counter)?;
                 
                 let mut sr = self.status_register;
@@ -146,8 +160,8 @@ impl Machine {
                 if self.sign_flag { sr |= crate::constants::SR_SIGN; }
                 if self.overflow_flag { sr |= crate::constants::SR_OVERFLOW; }
                 self.push(sr)?;
-                // Disable further interrupts until the handler re-enables them
-                // (prevents reentrant timer interrupts mid-handler).
+                // Switch to kernel mode and disable further interrupts until the handler re-enables them
+                self.status_register &= !crate::constants::SR_USER;
                 self.set_interrupt_enable(false);
                 self.program_counter = vector;
                 // Timer-handler runtime measurement for the starvation warning:

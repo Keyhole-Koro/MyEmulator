@@ -6,30 +6,97 @@ use crate::constants::{
     SERIAL_TX_ADDR,
     SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR,
     IRQ_CAUSE_ADDR,
+    MMU_CTRL_ADDR, MMU_PDBR_ADDR, MMU_FAULT_ADDR, MMU_FAULT_STATUS_ADDR, KERNEL_SP_ADDR,
+    IRQ_CAUSE_PAGE_FAULT, IRQ_CAUSE_PRIVILEGE_VIOLATION,
 };
+use crate::machine::mmu::{AccessType, MmuFault};
 
 use super::Machine;
 
 impl Machine {
+    pub(super) fn translate_addr(&mut self, vaddr: u32, access: AccessType) -> Result<u32, MmuFault> {
+        let is_user = self.is_user_mode();
+        self.mmu.translate(&mut self.ram, vaddr, access, is_user)
+    }
 
+    pub(super) fn raise_mmu_fault(&mut self, fault: MmuFault) {
+        match fault {
+            MmuFault::PageFault { .. } => {
+                self.irq_cause |= IRQ_CAUSE_PAGE_FAULT;
+            }
+            MmuFault::PrivilegeViolation { .. } => {
+                self.irq_cause |= IRQ_CAUSE_PRIVILEGE_VIOLATION;
+            }
+        }
+        self.pending_irq = true;
+    }
 
-    // Load used by the LD instructions. Reading the RX register consumes the
-    // next received byte (a side effect, hence a &mut path distinct from
-    // bus_read used for instruction fetch and stack access).
+    pub(super) fn fetch_instruction(&mut self) -> Result<u32, ()> {
+        let pc = self.program_counter;
+        let paddr = match self.translate_addr(pc, AccessType::Execute) {
+            Ok(p) => p,
+            Err(fault) => {
+                self.raise_mmu_fault(fault);
+                return Err(());
+            }
+        };
+        Ok(self.bus_read_physical(paddr))
+    }
+
+    // Load used by the LD instructions (Virtual memory -> Physical memory).
     pub(super) fn bus_load(&mut self, address: u32) -> u32 {
-        if address == SERIAL_RX_ADDR {
+        let paddr = match self.translate_addr(address, AccessType::Read) {
+            Ok(p) => p,
+            Err(fault) => {
+                self.raise_mmu_fault(fault);
+                return 0;
+            }
+        };
+
+        if paddr == SERIAL_RX_ADDR {
             return self.serial.read_rx();
         }
-        self.bus_read(address)
+        self.bus_read_physical(paddr)
     }
 
     pub(super) fn bus_load_byte(&mut self, address: u32) -> u8 {
-        if address == SERIAL_RX_ADDR {
+        let paddr = match self.translate_addr(address, AccessType::Read) {
+            Ok(p) => p,
+            Err(fault) => {
+                self.raise_mmu_fault(fault);
+                return 0;
+            }
+        };
+
+        if paddr == SERIAL_RX_ADDR {
             return self.serial.read_rx() as u8;
         }
-        self.bus_read_byte(address)
+        self.bus_read_byte_physical(paddr)
     }
+
     pub(super) fn bus_write(&mut self, address: u32, value: u32) {
+        let paddr = match self.translate_addr(address, AccessType::Write) {
+            Ok(p) => p,
+            Err(fault) => {
+                self.raise_mmu_fault(fault);
+                return;
+            }
+        };
+        self.bus_write_physical(paddr, value);
+    }
+
+    pub(super) fn bus_write_byte(&mut self, address: u32, value: u8) {
+        let paddr = match self.translate_addr(address, AccessType::Write) {
+            Ok(p) => p,
+            Err(fault) => {
+                self.raise_mmu_fault(fault);
+                return;
+            }
+        };
+        self.bus_write_byte_physical(paddr, value);
+    }
+
+    pub(super) fn bus_write_physical(&mut self, address: u32, value: u32) {
         if is_ram_address(address) {
             self.ram_write_word(address, value);
             return;
@@ -45,6 +112,18 @@ impl Machine {
 
         if is_io_address(address) {
             match address {
+                MMU_CTRL_ADDR => {
+                    self.mmu.set_enabled(value & 1 != 0);
+                    return;
+                }
+                MMU_PDBR_ADDR => {
+                    self.mmu.set_pdbr(value);
+                    return;
+                }
+                KERNEL_SP_ADDR => {
+                    self.mmu.kernel_sp = value;
+                    return;
+                }
                 SSD_BLOCK_ADDR => {
                     self.ssd.set_block(value);
                     return;
@@ -127,9 +206,6 @@ impl Machine {
                                 if ns > stats.evt_latency_max_ns {
                                     stats.evt_latency_max_ns = ns;
                                 }
-                                // Print a line per second while events flow so
-                                // latency can be read off live during pointer
-                                // movement.
                                 stats.live_lat_ns += ns;
                                 stats.live_samples += 1;
                                 if ns > stats.live_lat_max_ns {
@@ -138,13 +214,6 @@ impl Machine {
                                 let start = *stats.live_window_start
                                     .get_or_insert_with(std::time::Instant::now);
                                 if start.elapsed().as_secs_f64() >= 1.0 {
-                                    eprintln!(
-                                        "[lag] {:>5} evt/s  avg {:>7.2} ms  worst {:>7.2} ms  fifo {}",
-                                        stats.live_samples,
-                                        stats.live_lat_ns as f64 / stats.live_samples as f64 / 1e6,
-                                        stats.live_lat_max_ns as f64 / 1e6,
-                                        depth
-                                    );
                                     stats.live_window_start = Some(std::time::Instant::now());
                                     stats.live_lat_ns = 0;
                                     stats.live_lat_max_ns = 0;
@@ -166,15 +235,16 @@ impl Machine {
                     let _ = serial_log.write_all(&[ch]);
                     let _ = serial_log.flush();
                 }
-                // Flush every byte, not just on newline: prompts like "MyOS> "
-                // carry no trailing newline and would otherwise stay buffered and
-                // never appear in the terminal.
                 let _ = io::stdout().flush();
             }
         }
     }
 
     pub(super) fn bus_read(&self, address: u32) -> u32 {
+        self.bus_read_physical(address)
+    }
+
+    pub(super) fn bus_read_physical(&self, address: u32) -> u32 {
         if is_ram_address(address) {
             return self.ram_read_word(address);
         }
@@ -197,6 +267,21 @@ impl Machine {
         }
 
         if is_io_address(address) {
+            if address == MMU_CTRL_ADDR {
+                return if self.mmu.enabled { 1 } else { 0 };
+            }
+            if address == MMU_PDBR_ADDR {
+                return self.mmu.pdbr;
+            }
+            if address == MMU_FAULT_ADDR {
+                return self.mmu.fault_addr;
+            }
+            if address == MMU_FAULT_STATUS_ADDR {
+                return self.mmu.fault_status;
+            }
+            if address == KERNEL_SP_ADDR {
+                return self.mmu.kernel_sp;
+            }
 
             if address == SSD_STATUS_ADDR {
                 return self.ssd.status();
@@ -237,7 +322,7 @@ impl Machine {
         0xFFFF_FFFF
     }
 
-    pub(super) fn bus_write_byte(&mut self, address: u32, value: u8) {
+    pub(super) fn bus_write_byte_physical(&mut self, address: u32, value: u8) {
         if is_ram_address(address) {
             self.ram[address as usize] = value;
             return;
@@ -272,6 +357,10 @@ impl Machine {
     }
 
     pub(super) fn bus_read_byte(&self, address: u32) -> u8 {
+        self.bus_read_byte_physical(address)
+    }
+
+    pub(super) fn bus_read_byte_physical(&self, address: u32) -> u8 {
         if is_ram_address(address) {
             return self.ram[address as usize];
         }
@@ -308,18 +397,24 @@ impl Machine {
 
     pub(super) fn ram_read_word(&self, address: u32) -> u32 {
         let i = address as usize;
-        let b = &self.ram[i..i + 4];
-        u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        if i + 4 <= self.ram.len() {
+            let b = &self.ram[i..i + 4];
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            0
+        }
     }
 
     pub(super) fn ram_write_word(&mut self, address: u32, value: u32) {
         let i = address as usize;
-        let bytes = value.to_be_bytes();
-        self.ram[i..i + 4].copy_from_slice(&bytes);
+        if i + 4 <= self.ram.len() {
+            let bytes = value.to_be_bytes();
+            self.ram[i..i + 4].copy_from_slice(&bytes);
+        }
     }
 
     pub(super) fn read_stack_memory(&self, address: u32) -> u32 {
-        self.bus_read(address)
+        self.bus_read_physical(address)
     }
 
     fn service_dma2d(&mut self, cmd: u32) {

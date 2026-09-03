@@ -23,6 +23,20 @@ impl Machine {
             return Err(format!("Unknown opcode: 0x{:X}", inst.opcode));
         };
 
+        if self.is_user_mode() {
+            match opcode {
+                Opcode::Halt | Opcode::Iret | Opcode::In | Opcode::Out | Opcode::Ei | Opcode::Di | Opcode::Wfi => {
+                    self.mmu.record_fault(crate::machine::mmu::MmuFault::PrivilegeViolation {
+                        vaddr: self.program_counter.wrapping_sub(4),
+                    });
+                    self.irq_cause |= crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION;
+                    self.pending_irq = true;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
         match opcode {
             Opcode::Debug => {
                 self.debug_dump()?;
@@ -201,10 +215,25 @@ impl Machine {
             Opcode::Di => {
                 self.set_interrupt_enable(false);
             }
+            Opcode::Syscall => {
+                self.irq_cause |= crate::constants::IRQ_CAUSE_SYSCALL;
+                self.pending_irq = true;
+            }
             Opcode::Iret => {
                 // Reverse of the interrupt entry push order (PC then SR).
                 let sr = self.pop()?;
                 self.program_counter = self.pop()?;
+
+                let returning_to_user = (sr & crate::constants::SR_USER) != 0;
+                if returning_to_user {
+                    let kernel_sp = self.stack_pointer;
+                    self.stack_pointer = self.mmu.kernel_sp;
+                    self.mmu.kernel_sp = kernel_sp;
+                    self.status_register |= crate::constants::SR_USER;
+                } else {
+                    self.status_register &= !crate::constants::SR_USER;
+                }
+
                 // Restoring SR also restores the interrupt-enable state, so the
                 // resumed code regains the IE it had when interrupted.
                 self.set_interrupt_enable((sr & SR_IE) != 0);

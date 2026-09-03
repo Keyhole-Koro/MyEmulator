@@ -9,6 +9,7 @@ mod cpu_exec;
 mod diagnostics;
 mod interrupts;
 mod memory_bus;
+pub mod mmu;
 mod mouse;
 mod profiler;
 mod registers;
@@ -19,6 +20,7 @@ mod ssd;
 mod stack;
 mod timer;
 
+use mmu::Mmu;
 use mouse::MouseDevice;
 use profiler::Profiler;
 use serial::SerialDevice;
@@ -268,6 +270,7 @@ pub struct Machine {
     mouse: MouseDevice,
     timer: TimerDevice,
     ssd: SsdDevice,
+    pub mmu: Mmu,
 }
 
 impl Machine {
@@ -350,7 +353,13 @@ impl Machine {
             mouse: MouseDevice::new(),
             timer: TimerDevice::new(),
             ssd: SsdDevice::disabled(),
+            mmu: Mmu::new(),
         }
+    }
+
+    #[inline]
+    pub fn is_user_mode(&self) -> bool {
+        (self.status_register & crate::constants::SR_USER) != 0
     }
 
     // Attach a host disk-image file as the SSD's backing store.
