@@ -147,10 +147,7 @@ impl Profiler {
             inclusive_count: 0,
         });
 
-        self.func_stats
-            .entry(callee_entry)
-            .or_default()
-            .call_count += 1;
+        self.func_stats.entry(callee_entry).or_default().call_count += 1;
         *self.edges.entry((caller_entry, callee_entry)).or_insert(0) += 1;
     }
 
@@ -193,12 +190,22 @@ impl Profiler {
     pub fn write_json<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         self.flush_stack();
 
-        let file = File::create(path.as_ref())
-            .map_err(|e| format!("Unable to open profile file {}: {}", path.as_ref().display(), e))?;
+        let file = File::create(path.as_ref()).map_err(|e| {
+            format!(
+                "Unable to open profile file {}: {}",
+                path.as_ref().display(),
+                e
+            )
+        })?;
         let mut out = BufWriter::new(file);
 
         writeln!(out, "{{").map_err(err)?;
-        writeln!(out, "  \"total_instructions\": {},", self.total_instructions).map_err(err)?;
+        writeln!(
+            out,
+            "  \"total_instructions\": {},",
+            self.total_instructions
+        )
+        .map_err(err)?;
         writeln!(out, "  \"root_entry\": {},", self.root_entry).map_err(err)?;
 
         // Hotspots, sorted by hit count descending for readability.

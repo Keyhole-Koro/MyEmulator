@@ -1,5 +1,7 @@
-use crate::constants::{IO_BASE, SR_IE};
-use crate::instruction::{add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26, Opcode};
+use crate::constants::IO_BASE;
+use crate::instruction::{
+    add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26, Opcode,
+};
 
 use super::Machine;
 
@@ -25,10 +27,17 @@ impl Machine {
 
         if self.is_user_mode() {
             match opcode {
-                Opcode::Halt | Opcode::Iret | Opcode::In | Opcode::Out | Opcode::Ei | Opcode::Di | Opcode::Wfi => {
-                    self.mmu.record_fault(crate::machine::mmu::MmuFault::PrivilegeViolation {
-                        vaddr: self.program_counter.wrapping_sub(4),
-                    });
+                Opcode::Halt
+                | Opcode::Iret
+                | Opcode::In
+                | Opcode::Out
+                | Opcode::Ei
+                | Opcode::Di
+                | Opcode::Wfi => {
+                    self.mmu
+                        .record_fault(crate::machine::mmu::MmuFault::PrivilegeViolation {
+                            vaddr: self.program_counter.wrapping_sub(4),
+                        });
                     self.irq_cause |= crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION;
                     self.pending_irq = true;
                     return Ok(());
@@ -226,21 +235,12 @@ impl Machine {
 
                 let returning_to_user = (sr & crate::constants::SR_USER) != 0;
                 if returning_to_user {
-                    let kernel_sp = self.stack_pointer;
-                    self.stack_pointer = self.mmu.kernel_sp;
-                    self.mmu.kernel_sp = kernel_sp;
-                    self.status_register |= crate::constants::SR_USER;
-                } else {
-                    self.status_register &= !crate::constants::SR_USER;
+                    std::mem::swap(&mut self.stack_pointer, &mut self.mmu.kernel_sp);
                 }
 
-                // Restoring SR also restores the interrupt-enable state, so the
-                // resumed code regains the IE it had when interrupted.
-                self.set_interrupt_enable((sr & SR_IE) != 0);
-                self.carry_flag = (sr & crate::constants::SR_CARRY) != 0;
-                self.zero_flag = (sr & crate::constants::SR_ZERO) != 0;
-                self.sign_flag = (sr & crate::constants::SR_SIGN) != 0;
-                self.overflow_flag = (sr & crate::constants::SR_OVERFLOW) != 0;
+                // SR is architectural state; restore all mirrored execution
+                // fields together so its IE and condition bits cannot diverge.
+                self.restore_status_register(sr);
                 self.note_handler_return();
             }
             Opcode::Halt => {

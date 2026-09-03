@@ -2,16 +2,17 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use crate::constants::{RAM_END_EXCLUSIVE, RAM_START};
+use crate::constants::RAM_END_EXCLUSIVE;
 
 use super::Machine;
 
 impl Machine {
     pub fn set_serial_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path_ref = path.as_ref();
-        self.serial_log = Some(File::create(path_ref).map_err(|e| {
-            format!("Unable to open serial log {}: {}", path_ref.display(), e)
-        })?);
+        self.serial_log = Some(
+            File::create(path_ref)
+                .map_err(|e| format!("Unable to open serial log {}: {}", path_ref.display(), e))?,
+        );
         Ok(())
     }
 
@@ -24,11 +25,20 @@ impl Machine {
     pub fn write_ppm_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
-        let base: &[u32] = if self.swapped { &self.front } else { &self.vram };
+        let base: &[u32] = if self.swapped {
+            &self.front
+        } else {
+            &self.vram
+        };
         let mut out = File::create(&path).map_err(|e| {
-            format!("Unable to open screenshot {}: {}", path.as_ref().display(), e)
+            format!(
+                "Unable to open screenshot {}: {}",
+                path.as_ref().display(),
+                e
+            )
         })?;
-        write!(out, "P6\n{} {}\n255\n", DISPLAY_WIDTH, DISPLAY_HEIGHT).map_err(|e| e.to_string())?;
+        write!(out, "P6\n{} {}\n255\n", DISPLAY_WIDTH, DISPLAY_HEIGHT)
+            .map_err(|e| e.to_string())?;
         let mut rgb = Vec::with_capacity(DISPLAY_WIDTH * DISPLAY_HEIGHT * 3);
         for &pixel in base.iter().take(DISPLAY_WIDTH * DISPLAY_HEIGHT) {
             // 0x00RRGGBB, matching graphics.rgb() in the guest UI package.
@@ -49,9 +59,10 @@ impl Machine {
 
     pub fn set_trace_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path_ref = path.as_ref();
-        self.trace_log = Some(File::create(path_ref).map_err(|e| {
-            format!("Unable to open trace log {}: {}", path_ref.display(), e)
-        })?);
+        self.trace_log = Some(
+            File::create(path_ref)
+                .map_err(|e| format!("Unable to open trace log {}: {}", path_ref.display(), e))?,
+        );
         Ok(())
     }
 
@@ -61,13 +72,19 @@ impl Machine {
         start_address: u32,
         end_address: u32,
     ) -> Result<(), String> {
-        if start_address < RAM_START || end_address >= RAM_END_EXCLUSIVE || start_address > end_address {
-            eprintln!("Error: Invalid memory range for dump.");
-            return Ok(());
+        if end_address >= RAM_END_EXCLUSIVE || start_address > end_address {
+            return Err(format!(
+                "Invalid memory dump range: 0x{start_address:08x}..0x{end_address:08x}"
+            ));
         }
 
-        let mut out = File::create(&filename)
-            .map_err(|e| format!("Unable to open dump file {}: {}", filename.as_ref().display(), e))?;
+        let mut out = File::create(&filename).map_err(|e| {
+            format!(
+                "Unable to open dump file {}: {}",
+                filename.as_ref().display(),
+                e
+            )
+        })?;
 
         writeln!(
             out,
@@ -75,8 +92,11 @@ impl Machine {
             start_address, end_address
         )
         .map_err(|e| e.to_string())?;
-        writeln!(out, "------------------------------------------------------------")
-            .map_err(|e| e.to_string())?;
+        writeln!(
+            out,
+            "------------------------------------------------------------"
+        )
+        .map_err(|e| e.to_string())?;
 
         let mut address = start_address;
         while address <= end_address {
@@ -111,7 +131,7 @@ impl Machine {
             print!("0x{:08X}:", address);
             let line_bytes = remaining.min(16);
             for i in 0..line_bytes {
-                let byte = self.bus_read_byte(address.wrapping_add(i)) as u8;
+                let byte = self.bus_read_byte(address.wrapping_add(i));
                 print!(" {:02X}", byte);
             }
             println!();

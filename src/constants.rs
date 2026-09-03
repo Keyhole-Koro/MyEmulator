@@ -16,11 +16,11 @@ pub const ROM_END_EXCLUSIVE: u32 = ROM_START + ROM_SIZE;
 pub const DISPLAY_REFRESH_HZ: u64 = 60;
 
 pub fn is_vram_address(address: u32) -> bool {
-    address >= VRAM_BASE && address < VRAM_END_EXCLUSIVE
+    (VRAM_BASE..VRAM_END_EXCLUSIVE).contains(&address)
 }
 
 pub fn is_rom_address(address: u32) -> bool {
-    address >= ROM_START && address < ROM_END_EXCLUSIVE
+    (ROM_START..ROM_END_EXCLUSIVE).contains(&address)
 }
 
 pub const IO_BASE: u32 = 0x2400_0000;
@@ -85,33 +85,33 @@ pub const IRQ_CAUSE_PAGE_FAULT: u32 = 1 << 5;
 pub const IRQ_CAUSE_PRIVILEGE_VIOLATION: u32 = 1 << 6;
 
 // MMU & Virtual Memory MMIO registers
-pub const MMU_CTRL_ADDR: u32 = IO_BASE + 0x100;         // R/W: Bit 0 = Paging Enable
-pub const MMU_PDBR_ADDR: u32 = IO_BASE + 0x104;         // R/W: Physical Page Directory Base Register
-pub const MMU_FAULT_ADDR: u32 = IO_BASE + 0x108;        // R: Virtual address causing page fault
+pub const MMU_CTRL_ADDR: u32 = IO_BASE + 0x100; // R/W: Bit 0 = Paging Enable
+pub const MMU_PDBR_ADDR: u32 = IO_BASE + 0x104; // R/W: Physical Page Directory Base Register
+pub const MMU_FAULT_ADDR: u32 = IO_BASE + 0x108; // R: Virtual address causing page fault
 pub const MMU_FAULT_STATUS_ADDR: u32 = IO_BASE + 0x10C; // R: 0=Read, 1=Write, 2=Exec, 3=Priv
-pub const KERNEL_SP_ADDR: u32 = IO_BASE + 0x110;        // R/W: Kernel Stack Pointer for user traps
+pub const KERNEL_SP_ADDR: u32 = IO_BASE + 0x110; // R/W: Kernel Stack Pointer for user traps
 
 // Status register bits
-pub const SR_IE: u32       = 1 << 0; // 0b0000_0001
-pub const SR_CARRY: u32    = 1 << 1; // 0b0000_0010
-pub const SR_ZERO: u32     = 1 << 2; // 0b0000_0100
-pub const SR_SIGN: u32     = 1 << 3; // 0b0000_1000
+pub const SR_IE: u32 = 1 << 0; // 0b0000_0001
+pub const SR_CARRY: u32 = 1 << 1; // 0b0000_0010
+pub const SR_ZERO: u32 = 1 << 2; // 0b0000_0100
+pub const SR_SIGN: u32 = 1 << 3; // 0b0000_1000
 pub const SR_OVERFLOW: u32 = 1 << 4; // 0b0001_0000
-pub const SR_USER: u32     = 1 << 5; // 0b0010_0000: 0 = Kernel Mode, 1 = User Mode
+pub const SR_USER: u32 = 1 << 5; // 0b0010_0000: 0 = Kernel Mode, 1 = User Mode
 
 // Page Table Entry (PTE) bits
-pub const PTE_VALID: u32    = 1 << 0; // V: Valid / Present
+pub const PTE_VALID: u32 = 1 << 0; // V: Valid / Present
 pub const PTE_WRITABLE: u32 = 1 << 1; // W: Writable
-pub const PTE_EXEC: u32     = 1 << 2; // X: Executable
-pub const PTE_USER: u32     = 1 << 3; // U: User accessible (0 = Kernel only)
+pub const PTE_EXEC: u32 = 1 << 2; // X: Executable
+pub const PTE_USER: u32 = 1 << 3; // U: User accessible (0 = Kernel only)
 pub const PTE_ACCESSED: u32 = 1 << 4; // A: Accessed
-pub const PTE_DIRTY: u32    = 1 << 5; // D: Dirty
-pub const PAGE_SIZE: u32    = 4096;
+pub const PTE_DIRTY: u32 = 1 << 5; // D: Dirty
+pub const PAGE_SIZE: u32 = 4096;
 
 pub fn is_ram_address(address: u32) -> bool {
-    address >= RAM_START && address < RAM_END_EXCLUSIVE
+    address < RAM_END_EXCLUSIVE
 }
 
 pub fn is_io_address(address: u32) -> bool {
-    address >= IO_BASE && address <= IO_END_INCLUSIVE
+    (IO_BASE..=IO_END_INCLUSIVE).contains(&address)
 }
