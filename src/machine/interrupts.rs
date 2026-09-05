@@ -110,7 +110,7 @@ impl Machine {
     pub(super) fn poll_devices(&mut self) {
         self.poll_serial_input();
 
-        if self.timer.service() {
+        if self.timer.service(self.instrs_retired, self.waiting_for_interrupt) {
             self.irq_cause |= IRQ_CAUSE_TIMER;
             self.pending_irq = true;
         }
