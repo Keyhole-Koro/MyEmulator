@@ -1,4 +1,5 @@
 use crate::cli::parse_args;
+use crate::control_stdio;
 use crate::loader::read_binary_file;
 use crate::machine::{DebugOptions, Machine};
 use std::path::PathBuf;
@@ -10,6 +11,9 @@ pub fn run() -> Result<(), String> {
     let binary = read_binary_file(&args.input_file)?;
 
     let mut machine = Machine::new(args.verbose, args.headless);
+    if let Some(interval) = args.timer_interval {
+        machine.set_timer_interval(interval);
+    }
     if let Some(disk) = &args.disk_file {
         machine.load_disk(PathBuf::from(disk))?;
         println!("Mounted disk image {}", disk);
@@ -28,6 +32,23 @@ pub fn run() -> Result<(), String> {
     let start_address = 0x0000_0000;
     machine.load_program(&binary, start_address);
     machine.set_instruction_pointer(start_address);
+
+    // MYOS-004: control-stdio mode drives the machine from JSON Lines commands
+    // on stdin instead of running it to completion, so it exits here rather
+    // than falling through to the register-dump/report flow below (that
+    // report describes a halted machine, which this one never becomes).
+    if args.control_stdio {
+        return control_stdio::run(&mut machine);
+    }
+
+    // Enable profiling before execution so the call graph is rooted at the entry
+    // point and every retired instruction is counted.
+    if args.profile_out.is_some() {
+        machine.enable_profiler(start_address);
+    }
+    if args.io_stats {
+        machine.enable_io_stats();
+    }
     let debug_mode = args.trace
         || args.break_addr.is_some()
         || args.step_count.is_some()
@@ -37,8 +58,14 @@ pub fn run() -> Result<(), String> {
         trace: args.trace,
         break_addr: args.break_addr,
         step_count: args.step_count,
-        timer_interval: args.timer_interval,
     })?;
+
+    if let Some(profile_path) = &args.profile_out {
+        machine.write_profile(profile_path)?;
+        println!("Profile written to {}", profile_path);
+    }
+
+    machine.report_io_stats();
 
     if !debug_mode {
         machine.display_stack();

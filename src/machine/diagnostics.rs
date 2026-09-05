@@ -2,24 +2,67 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use crate::constants::{RAM_END_EXCLUSIVE, RAM_START};
+use crate::constants::RAM_END_EXCLUSIVE;
 
 use super::Machine;
 
 impl Machine {
     pub fn set_serial_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path_ref = path.as_ref();
-        self.serial_log = Some(File::create(path_ref).map_err(|e| {
-            format!("Unable to open serial log {}: {}", path_ref.display(), e)
-        })?);
+        self.serial_log = Some(
+            File::create(path_ref)
+                .map_err(|e| format!("Unable to open serial log {}: {}", path_ref.display(), e))?,
+        );
         Ok(())
+    }
+
+    // MYOS-004: dump the current scanout buffer (front if the guest has
+    // swapped at least once, else the back buffer -- mirrors
+    // maybe_refresh_display's choice) as a binary PPM (P6). Plain PPM rather
+    // than PNG: no image-encoding crate is vendored, and P6 needs none --
+    // just a header and raw RGB bytes, trivially converted with any image
+    // tool if a client wants PNG.
+    pub fn write_ppm_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+
+        let base: &[u32] = if self.swapped {
+            &self.front
+        } else {
+            &self.vram
+        };
+        let mut out = File::create(&path).map_err(|e| {
+            format!(
+                "Unable to open screenshot {}: {}",
+                path.as_ref().display(),
+                e
+            )
+        })?;
+        write!(out, "P6\n{} {}\n255\n", DISPLAY_WIDTH, DISPLAY_HEIGHT)
+            .map_err(|e| e.to_string())?;
+        let mut rgb = Vec::with_capacity(DISPLAY_WIDTH * DISPLAY_HEIGHT * 3);
+        for &pixel in base.iter().take(DISPLAY_WIDTH * DISPLAY_HEIGHT) {
+            // 0x00RRGGBB, matching graphics.rgb() in the guest UI package.
+            rgb.push(((pixel >> 16) & 0xFF) as u8);
+            rgb.push(((pixel >> 8) & 0xFF) as u8);
+            rgb.push((pixel & 0xFF) as u8);
+        }
+        out.write_all(&rgb).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // MYOS-004: take everything transmitted over serial since the last drain.
+    // control_stdio.rs uses this to scan for the DOM snapshot markers without
+    // needing a separate response channel from the guest.
+    pub fn drain_serial_tx(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.serial_tx_buf)
     }
 
     pub fn set_trace_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path_ref = path.as_ref();
-        self.trace_log = Some(File::create(path_ref).map_err(|e| {
-            format!("Unable to open trace log {}: {}", path_ref.display(), e)
-        })?);
+        self.trace_log = Some(
+            File::create(path_ref)
+                .map_err(|e| format!("Unable to open trace log {}: {}", path_ref.display(), e))?,
+        );
         Ok(())
     }
 
@@ -29,13 +72,19 @@ impl Machine {
         start_address: u32,
         end_address: u32,
     ) -> Result<(), String> {
-        if start_address < RAM_START || end_address >= RAM_END_EXCLUSIVE || start_address > end_address {
-            eprintln!("Error: Invalid memory range for dump.");
-            return Ok(());
+        if end_address >= RAM_END_EXCLUSIVE || start_address > end_address {
+            return Err(format!(
+                "Invalid memory dump range: 0x{start_address:08x}..0x{end_address:08x}"
+            ));
         }
 
-        let mut out = File::create(&filename)
-            .map_err(|e| format!("Unable to open dump file {}: {}", filename.as_ref().display(), e))?;
+        let mut out = File::create(&filename).map_err(|e| {
+            format!(
+                "Unable to open dump file {}: {}",
+                filename.as_ref().display(),
+                e
+            )
+        })?;
 
         writeln!(
             out,
@@ -43,8 +92,11 @@ impl Machine {
             start_address, end_address
         )
         .map_err(|e| e.to_string())?;
-        writeln!(out, "------------------------------------------------------------")
-            .map_err(|e| e.to_string())?;
+        writeln!(
+            out,
+            "------------------------------------------------------------"
+        )
+        .map_err(|e| e.to_string())?;
 
         let mut address = start_address;
         while address <= end_address {
@@ -79,7 +131,7 @@ impl Machine {
             print!("0x{:08X}:", address);
             let line_bytes = remaining.min(16);
             for i in 0..line_bytes {
-                let byte = self.bus_read_byte(address.wrapping_add(i)) as u8;
+                let byte = self.bus_read_byte(address.wrapping_add(i));
                 print!(" {:02X}", byte);
             }
             println!();

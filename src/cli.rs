@@ -11,9 +11,16 @@ pub struct Args {
     pub step_count: Option<u64>,
     pub print_regs: bool,
     pub mem_range: Option<(u32, u32)>,
-    pub timer_interval: Option<u64>,
     pub headless: bool,
+    // MYOS-004: run headless and drive the machine from JSON Lines commands on
+    // stdin instead of executing to completion. See control_stdio.rs.
+    pub control_stdio: bool,
     pub disk_file: Option<String>,
+    // When set, collect an instruction-level profile and write it as JSON here.
+    pub profile_out: Option<String>,
+    pub timer_interval: Option<u64>,
+    // Report wall-clock time spent in each host display/input layer at exit.
+    pub io_stats: bool,
 }
 
 fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
@@ -49,9 +56,12 @@ pub fn parse_args() -> Result<Args, String> {
     let mut step_count = None;
     let mut print_regs = false;
     let mut mem_range = None;
-    let mut timer_interval = None;
     let mut headless = false;
+    let mut control_stdio = false;
     let mut disk_file = None;
+    let mut profile_out = None;
+    let mut timer_interval = None;
+    let mut io_stats = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -96,12 +106,6 @@ pub fn parse_args() -> Result<Args, String> {
             "--regs" => {
                 print_regs = true;
             }
-            "--timer-interval" => {
-                let raw = args
-                    .next()
-                    .ok_or_else(|| "--timer-interval requires a count like 1000".to_string())?;
-                timer_interval = Some(parse_u64_value(&raw, "--timer-interval")?);
-            }
             "--mem" => {
                 let start_raw = args
                     .next()
@@ -117,11 +121,32 @@ pub fn parse_args() -> Result<Args, String> {
             "--headless" => {
                 headless = true;
             }
+            "--control-stdio" => {
+                // Implies --headless: there is no window to drive by hand once
+                // a client is talking to the machine over stdio.
+                headless = true;
+                control_stdio = true;
+            }
+            "--io-stats" => {
+                io_stats = true;
+            }
             "--disk" => {
                 disk_file = Some(
                     args.next()
                         .ok_or_else(|| "--disk requires a disk image path".to_string())?,
                 );
+            }
+            "--profile" => {
+                profile_out = Some(
+                    args.next()
+                        .ok_or_else(|| "--profile requires an output JSON path".to_string())?,
+                );
+            }
+            "--timer-interval" => {
+                let raw = args
+                    .next()
+                    .ok_or_else(|| "--timer-interval requires a microsecond count".to_string())?;
+                timer_interval = Some(parse_u64_value(&raw, "--timer-interval")?);
             }
             _ => {
                 return Err(format!("Unknown option: {}", arg));
@@ -144,8 +169,11 @@ pub fn parse_args() -> Result<Args, String> {
         step_count,
         print_regs,
         mem_range,
-        timer_interval,
         headless,
+        control_stdio,
         disk_file,
+        profile_out,
+        timer_interval,
+        io_stats,
     })
 }

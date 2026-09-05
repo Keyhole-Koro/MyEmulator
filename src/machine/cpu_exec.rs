@@ -1,5 +1,7 @@
-use crate::constants::{IO_BASE, SR_IE};
-use crate::instruction::{add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26};
+use crate::constants::IO_BASE;
+use crate::instruction::{
+    add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26, Opcode,
+};
 
 use super::Machine;
 
@@ -19,63 +21,92 @@ impl Machine {
             );
         }
 
-        match inst.opcode {
-            0x1A => {
+        let Ok(opcode) = Opcode::try_from(inst.opcode) else {
+            return Err(format!("Unknown opcode: 0x{:X}", inst.opcode));
+        };
+
+        if self.is_user_mode() {
+            match opcode {
+                Opcode::Halt
+                | Opcode::Iret
+                | Opcode::In
+                | Opcode::Out
+                | Opcode::Ei
+                | Opcode::Di
+                | Opcode::Wfi => {
+                    self.mmu
+                        .record_fault(crate::machine::mmu::MmuFault::PrivilegeViolation {
+                            vaddr: self.program_counter.wrapping_sub(4),
+                        });
+                    self.irq_cause |= crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION;
+                    self.pending_irq = true;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        match opcode {
+            Opcode::Debug => {
                 self.debug_dump()?;
             }
-            0x01 => {
+            Opcode::Mov => {
                 let rhs = self.get_register(inst.reg2)?;
                 self.set_register(inst.reg1, rhs)?;
                 self.update_zero_flag(rhs);
             }
-            0x02 => {
+            Opcode::Movi => {
                 let imm = inst.imm & 0x1F_FFFF;
                 self.set_register(inst.reg1, imm)?;
                 self.update_zero_flag(imm);
             }
-            0x18 => {
+            Opcode::Movis => {
                 let imm = inst.imm & 0x1F_FFFF;
                 let value = sign_extend_21(imm) as u32;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x03 => {
+            Opcode::Ld => {
                 let addr = self.get_register(inst.reg2)?;
+                self.profile_mem_read(addr);
                 let value = self.bus_load(addr);
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x04 => {
+            Opcode::St => {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)?;
+                self.profile_mem_write(addr);
                 self.bus_write(addr, value);
             }
-            0x1C => {
+            Opcode::Ldb => {
                 let addr = self.get_register(inst.reg2)?;
+                self.profile_mem_read(addr);
                 let value = self.bus_load_byte(addr) as u32;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x1D => {
+            Opcode::Stb => {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)? as u8;
+                self.profile_mem_write(addr);
                 self.bus_write_byte(addr, value);
             }
-            0x05 => {
+            Opcode::Add => {
                 let lhs = self.get_register(inst.reg1)?;
                 let rhs = self.get_register(inst.reg2)?;
                 let value = lhs.wrapping_add(rhs);
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x19 => {
+            Opcode::Addis => {
                 let lhs = self.get_register(inst.reg1)?;
                 let rhs = sign_extend_21(inst.imm & 0x1F_FFFF) as u32;
                 let value = lhs.wrapping_add(rhs);
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x06 => {
+            Opcode::Sub => {
                 let lhs = self.get_register(inst.reg1)?;
                 let rhs = self.get_register(inst.reg2)?;
                 let result = lhs.wrapping_sub(rhs);
@@ -88,7 +119,7 @@ impl Machine {
 
                 self.set_register(inst.reg1, result)?;
             }
-            0x07 => {
+            Opcode::Cmp => {
                 let lhs = self.get_register(inst.reg1)?;
                 let rhs = self.get_register(inst.reg2)?;
                 let result = lhs.wrapping_sub(rhs);
@@ -99,113 +130,130 @@ impl Machine {
                 self.overflow_flag = (((lhs as i32) < 0) != ((rhs as i32) < 0))
                     && (((lhs as i32) < 0) != ((result as i32) < 0));
             }
-            0x08 => {
+            Opcode::And => {
                 let value = self.get_register(inst.reg1)? & self.get_register(inst.reg2)?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x09 => {
+            Opcode::Or => {
                 let value = self.get_register(inst.reg1)? | self.get_register(inst.reg2)?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x0A => {
+            Opcode::Xor => {
                 let value = self.get_register(inst.reg1)? ^ self.get_register(inst.reg2)?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x0B => {
+            Opcode::Shl => {
                 let value = self.get_register(inst.reg1)? << 1;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x0C => {
+            Opcode::Shr => {
                 let value = self.get_register(inst.reg1)? >> 1;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x1B => {
+            Opcode::Call => {
                 self.link_register = self.program_counter;
                 let offset = sign_extend_26(inst.imm);
                 self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
             }
-            0x0D => {
+            Opcode::Jmp => {
                 let offset = sign_extend_26(inst.imm);
                 self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
             }
-            0x0E => {
+            Opcode::Jz => {
                 if self.zero_flag {
                     let offset = sign_extend_26(inst.imm);
                     self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
                 }
             }
-            0x0F => {
+            Opcode::Jnz => {
                 if !self.zero_flag {
                     let offset = sign_extend_26(inst.imm);
                     self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
                 }
             }
-            0x10 => {
+            Opcode::Jg => {
                 if !self.zero_flag && (self.sign_flag == self.overflow_flag) {
                     let offset = sign_extend_26(inst.imm);
                     self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
                 }
             }
-            0x11 => {
+            Opcode::Jl => {
                 if self.sign_flag != self.overflow_flag {
                     let offset = sign_extend_26(inst.imm);
                     self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
                 }
             }
-            0x12 => {
+            Opcode::Ja => {
                 if !self.carry_flag && !self.zero_flag {
                     let offset = sign_extend_26(inst.imm);
                     self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
                 }
             }
-            0x13 => {
+            Opcode::Jb => {
                 if self.carry_flag {
                     let offset = sign_extend_26(inst.imm);
                     self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
                 }
             }
-            0x14 => {
+            Opcode::Push => {
                 let value = self.get_register(inst.reg1)?;
                 self.push(value)?;
             }
-            0x15 => {
+            Opcode::Pop => {
                 let value = self.pop()?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x16 => {
+            Opcode::In => {
                 let value = self.bus_load(IO_BASE.wrapping_add(inst.imm));
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
-            0x17 => {
+            Opcode::Out => {
                 let value = self.get_register(inst.reg1)?;
                 self.bus_write(IO_BASE.wrapping_add(inst.imm), value);
             }
-            0x1E => {
+            Opcode::Ei => {
                 self.set_interrupt_enable(true);
             }
-            0x1F => {
+            Opcode::Di => {
                 self.set_interrupt_enable(false);
             }
-            0x20 => {
+            Opcode::Syscall => {
+                self.irq_cause |= crate::constants::IRQ_CAUSE_SYSCALL;
+                self.pending_irq = true;
+            }
+            Opcode::Iret => {
                 // Reverse of the interrupt entry push order (PC then SR).
                 let sr = self.pop()?;
                 self.program_counter = self.pop()?;
-                // Restoring SR also restores the interrupt-enable state, so the
-                // resumed code regains the IE it had when interrupted.
-                self.set_interrupt_enable((sr & SR_IE) != 0);
+
+                let returning_to_user = (sr & crate::constants::SR_USER) != 0;
+                if returning_to_user {
+                    std::mem::swap(&mut self.stack_pointer, &mut self.mmu.kernel_sp);
+                }
+
+                // SR is architectural state; restore all mirrored execution
+                // fields together so its IE and condition bits cannot diverge.
+                self.restore_status_register(sr);
+                self.note_handler_return();
             }
-            0x3F => {
+            Opcode::Halt => {
                 self.halted = true;
             }
-            _ => {
-                return Err(format!("Unknown opcode: 0x{:X}", inst.opcode));
+            Opcode::Wfi => {
+                // WFI: wait for interrupt. Only stall if interrupts are
+                // enabled; otherwise act as a NOP (matches ARM semantics).
+                // With IE=false no IRQ could ever wake the CPU, so stalling
+                // would be a permanent deadlock.
+                if self.interrupt_enable {
+                    self.waiting_for_interrupt = true;
+                }
             }
         }
 
