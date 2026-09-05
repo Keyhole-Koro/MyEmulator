@@ -59,9 +59,8 @@ impl Machine {
     // testable without a window; control_stdio.rs also calls this directly to
     // inject mouse.move/down/up commands in place of host window sampling.
     pub fn set_mouse_state(&mut self, x: u32, y: u32, buttons: u32) {
-        use crate::constants::IRQ_CAUSE_MOUSE;
         if self.mouse.update(x, y, buttons) {
-            self.irq_cause |= IRQ_CAUSE_MOUSE;
+            self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
             self.pending_irq = true;
         }
     }
