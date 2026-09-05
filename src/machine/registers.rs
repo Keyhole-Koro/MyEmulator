@@ -62,7 +62,7 @@ impl Machine {
             0x08 => self.program_counter = value,
             0x09 => self.stack_pointer = value,
             0x0A => self.base_pointer = value,
-            0x0B => self.status_register = value,
+            0x0B => self.restore_status_register(value),
             0x0C => self.link_register = value,
             _ => return Err(format!("Invalid register index {}", reg)),
         }
@@ -71,5 +71,38 @@ impl Machine {
 
     pub(super) fn update_zero_flag(&mut self, value: u32) {
         self.zero_flag = value == 0;
+    }
+
+    // Keep the architectural status register and the execution fast-path
+    // fields synchronized whenever an instruction restores or writes SR.
+    pub(super) fn restore_status_register(&mut self, value: u32) {
+        self.status_register = value;
+        self.interrupt_enable = (value & crate::constants::SR_IE) != 0;
+        self.carry_flag = (value & crate::constants::SR_CARRY) != 0;
+        self.zero_flag = (value & crate::constants::SR_ZERO) != 0;
+        self.sign_flag = (value & crate::constants::SR_SIGN) != 0;
+        self.overflow_flag = (value & crate::constants::SR_OVERFLOW) != 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Machine;
+    use crate::constants::{SR_CARRY, SR_IE, SR_OVERFLOW, SR_SIGN, SR_ZERO};
+
+    #[test]
+    fn writing_sr_synchronizes_execution_flags() {
+        let mut machine = Machine::new(false, true);
+        let sr = SR_IE | SR_CARRY | SR_ZERO | SR_SIGN | SR_OVERFLOW;
+
+        machine
+            .set_register(0x0B, sr)
+            .expect("SR is a valid register");
+
+        assert!(machine.interrupt_enable);
+        assert!(machine.carry_flag);
+        assert!(machine.zero_flag);
+        assert!(machine.sign_flag);
+        assert!(machine.overflow_flag);
     }
 }

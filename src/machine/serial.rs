@@ -22,7 +22,7 @@ impl SerialDevice {
         self.rx_recv = Some(recv);
     }
 
-    #[cfg(test)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn ingest_bytes(&mut self, bytes: &[u8]) {
         self.rx_queue.extend(bytes.iter().copied());
     }
@@ -44,7 +44,9 @@ impl SerialDevice {
     }
 
     pub fn service_input(&mut self) -> bool {
-        let Some(rx) = &self.rx_recv else { return false };
+        let Some(rx) = &self.rx_recv else {
+            return false;
+        };
         let mut bytes = Vec::new();
         while let Ok(byte) = rx.try_recv() {
             bytes.push(byte);

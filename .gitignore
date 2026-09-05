@@ -7,3 +7,9 @@ build/
 target/
 
 memory_dump*.txt
+
+# Logs and profiling data
+*.log
+perf.data
+perf.data.old
+profile.json
