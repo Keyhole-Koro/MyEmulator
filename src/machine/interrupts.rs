@@ -146,8 +146,6 @@ impl Machine {
                     std::mem::swap(&mut self.stack_pointer, &mut self.mmu.kernel_sp);
                 }
 
-                self.push(self.program_counter)?;
-
                 let mut sr = self.status_register;
                 if self.carry_flag {
                     sr |= crate::constants::SR_CARRY;
@@ -161,10 +159,13 @@ impl Machine {
                 if self.overflow_flag {
                     sr |= crate::constants::SR_OVERFLOW;
                 }
-                self.push(sr)?;
-                // Switch to kernel mode and disable further interrupts until the handler re-enables them
+
+                // Switch to kernel mode and disable further interrupts before pushing to kernel stack
                 self.status_register &= !crate::constants::SR_USER;
                 self.set_interrupt_enable(false);
+
+                self.push(self.program_counter)?;
+                self.push(sr)?;
                 self.program_counter = vector;
                 // Timer-handler runtime measurement for the starvation warning:
                 // note when a timer IRQ enters its handler; the iret opcode
