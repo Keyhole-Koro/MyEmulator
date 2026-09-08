@@ -2,6 +2,7 @@
 name = "myemu"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [profile.release]
 debug = true
@@ -22,4 +23,3 @@ libc = "0.2"
 # the run loop exit cleanly and drop the minifb Window, which destroys the X11
 # window. Without this the process dies before Drop runs and the window is
 # orphaned by the X server.
-
