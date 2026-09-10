@@ -12,6 +12,14 @@
 // reach the server. Measured on the same host: ~1.1 ms per frame, or ~2.9 ms
 // when forcing a round trip with XSync.
 //
+// present() uses the XSync round trip (see its own comment): the shared
+// segment has no double buffering, so the next present() call starts
+// overwriting the same memory the server may still be mid-read on. Skipping
+// the wait let a slow/busy server observe a torn frame -- a mix of the old
+// and new pixels, visible as small stale fragments (e.g. a previous cursor
+// position) frozen on screen. ~2.9 ms/frame is still ~340 fps of budget, far
+// above the 60 Hz this scans out at, so the wait costs nothing perceptible.
+//
 // MIT-SHM only works when the server is on this machine. present() reports
 // failure rather than panicking so the caller can fall back to minifb.
 
@@ -238,9 +246,12 @@ impl ShmPresenter {
                 height,
                 0,
             );
-            // Flush the request without waiting for the server to finish: the
-            // blit reads from memory both sides already share.
-            (self.xlib.XFlush)(self.display);
+            // Wait for the server to finish reading the shared segment before
+            // returning, so the caller can safely overwrite it with the next
+            // frame (see the module comment: without this, a slow server can
+            // still be mid-blit when we start writing new pixels into the
+            // same memory, tearing the frame it's displaying).
+            (self.xlib.XSync)(self.display, 0);
         }
     }
 }
