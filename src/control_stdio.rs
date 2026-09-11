@@ -20,7 +20,11 @@
 use std::io::{self, BufRead, Write};
 use std::time::{Duration, Instant};
 
-use crate::constants::MOUSE_BUTTON_LEFT;
+use crate::constants::{
+    KBD_EVT_CHAR, KBD_EVT_DOWN, KBD_EVT_UP, KEY_BACKSPACE, KEY_DELETE, KEY_DOWN, KEY_END,
+    KEY_ENTER, KEY_ESCAPE, KEY_HOME, KEY_LEFT, KEY_PAGE_DOWN, KEY_PAGE_UP, KEY_RIGHT, KEY_SPACE,
+    KEY_TAB, KEY_UP, MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT,
+};
 use crate::machine::Machine;
 
 const SNAPSHOT_BEGIN: &str = "---DOM-SNAPSHOT-BEGIN---";
@@ -33,6 +37,7 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const BOOT_BUDGET: u64 = 500_000;
 const INPUT_BUDGET: u64 = 20_000;
 const FRAME_WAIT_BUDGET: u64 = 200_000;
+const FRAME_WAIT_ROUNDS: u32 = 25;
 const SNAPSHOT_BUDGET: u64 = 50_000;
 
 pub fn run(machine: &mut Machine) -> Result<(), String> {
@@ -64,29 +69,64 @@ pub fn run(machine: &mut Machine) -> Result<(), String> {
                 machine.run_frame_budget(INPUT_BUDGET)?;
                 ack_ok(None);
             }
-            // Only the left button is wired up (MOUSE_BUTTON_LEFT is the only
-            // one the hardware/kernel define); "button" is accepted but
-            // ignored rather than rejected, so the client's API can still
-            // name it explicitly.
+            // "button" defaults to left; "right" selects MOUSE_BUTTON_RIGHT.
             "mouse.down" => {
-                mouse_buttons |= MOUSE_BUTTON_LEFT;
+                mouse_buttons |= mouse_button_from_json(line);
                 machine.set_mouse_state(mouse_x, mouse_y, mouse_buttons);
                 machine.run_frame_budget(INPUT_BUDGET)?;
                 ack_ok(None);
             }
             "mouse.up" => {
-                mouse_buttons &= !MOUSE_BUTTON_LEFT;
+                mouse_buttons &= !mouse_button_from_json(line);
                 machine.set_mouse_state(mouse_x, mouse_y, mouse_buttons);
                 machine.run_frame_budget(INPUT_BUDGET)?;
                 ack_ok(None);
             }
+            // Keyboard injection. key.type feeds each character of "text" as a
+            // CHAR event (what a text field consumes); key.press/key.release
+            // queue DOWN/UP for a KEY_* code or a single-character key name.
+            "key.type" => match json_field_str(line, "text") {
+                Some(text) => {
+                    for ch in text.chars() {
+                        machine.push_key_event(KBD_EVT_CHAR, ch as u32, 0);
+                    }
+                    machine.run_frame_budget(INPUT_BUDGET)?;
+                    ack_ok(None);
+                }
+                None => ack_err("key.type requires \"text\""),
+            },
+            "key.press" | "key.release" => match key_code_from_json(line) {
+                Some(code) => {
+                    let kind = if cmd == "key.press" { KBD_EVT_DOWN } else { KBD_EVT_UP };
+                    let mods = json_field_i64(line, "mods").unwrap_or(0) as u32;
+                    machine.push_key_event(kind, code, mods);
+                    machine.run_frame_budget(INPUT_BUDGET)?;
+                    ack_ok(None);
+                }
+                None => ack_err("key.press/key.release require \"key\" (a name like \"enter\" or a character)"),
+            },
+            "mouse.wheel" => {
+                let steps = json_field_i64(line, "steps").unwrap_or(0) as i32;
+                machine.set_mouse_state_wheel(mouse_x, mouse_y, mouse_buttons, steps);
+                machine.run_frame_budget(INPUT_BUDGET)?;
+                ack_ok(None);
+            }
+            // Run until the guest presents a frame (DISPLAY_SWAP), so a
+            // following screenshot or snapshot sees the reaction to the
+            // inputs above; gives up after FRAME_WAIT_ROUNDS budgets when
+            // nothing was dirty and no frame is coming.
             "frame.wait" => {
-                machine.run_frame_budget(FRAME_WAIT_BUDGET)?;
+                let before = machine.swap_count();
+                let mut rounds = 0;
+                while machine.swap_count() == before && rounds < FRAME_WAIT_ROUNDS {
+                    machine.run_frame_budget(FRAME_WAIT_BUDGET)?;
+                    rounds += 1;
+                }
                 ack_ok(None);
             }
             "dom.snapshot" => dom_snapshot(machine),
             "screenshot" => match json_field_str(line, "path") {
-                Some(path) => match machine.write_ppm_screenshot(&path) {
+                Some(path) => match machine.write_screenshot(&path) {
                     Ok(()) => ack_ok(Some(&format!("\"path\":{}", json_quote(&path)))),
                     Err(e) => ack_err(&e),
                 },
@@ -161,6 +201,44 @@ fn extract_snapshot(captured: &[u8]) -> Option<String> {
         .filter(|l| !l.is_empty())
         .collect();
     Some(lines.join(","))
+}
+
+fn mouse_button_from_json(line: &str) -> u32 {
+    match json_field_str(line, "button").as_deref() {
+        Some("right") => MOUSE_BUTTON_RIGHT,
+        _ => MOUSE_BUTTON_LEFT,
+    }
+}
+
+// "key" is either a named key or a single character (its lowercase ASCII is
+// the DOWN/UP code, mirroring keyboard.rs's key_code).
+fn key_code_from_json(line: &str) -> Option<u32> {
+    let key = json_field_str(line, "key")?;
+    let code = match key.to_ascii_lowercase().as_str() {
+        "enter" | "return" => KEY_ENTER,
+        "backspace" => KEY_BACKSPACE,
+        "tab" => KEY_TAB,
+        "escape" | "esc" => KEY_ESCAPE,
+        "delete" | "del" => KEY_DELETE,
+        "space" => KEY_SPACE,
+        "left" => KEY_LEFT,
+        "right" => KEY_RIGHT,
+        "up" => KEY_UP,
+        "down" => KEY_DOWN,
+        "home" => KEY_HOME,
+        "end" => KEY_END,
+        "pageup" => KEY_PAGE_UP,
+        "pagedown" => KEY_PAGE_DOWN,
+        other => {
+            let mut chars = other.chars();
+            let c = chars.next()?;
+            if chars.next().is_some() {
+                return None;
+            }
+            c as u32
+        }
+    };
+    Some(code)
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {

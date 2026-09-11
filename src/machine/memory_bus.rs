@@ -158,6 +158,7 @@ impl Machine {
                         self.maybe_refresh_display(false);
                         self.front.copy_from_slice(&self.vram);
                         self.swapped = true;
+                        self.swap_count = self.swap_count.wrapping_add(1);
                         let retired = self.instrs_retired;
                         if let Some(stats) = self.io_stats.as_mut() {
                             if stats.guest_swaps > 0 {
@@ -185,6 +186,12 @@ impl Machine {
                     self.irq_cause &= !value; // Ack (clear) the bits that are written as 1
                     if self.irq_cause == 0 {
                         self.pending_irq = false;
+                    }
+                    return;
+                }
+                crate::constants::KBD_EVT_POP_ADDR => {
+                    if value != 0 {
+                        self.keyboard.pop();
                     }
                     return;
                 }
@@ -312,6 +319,21 @@ impl Machine {
             if address == crate::constants::MOUSE_EVT_BTN_ADDR {
                 return self.mouse.head_event().buttons;
             }
+            if address == crate::constants::MOUSE_EVT_WHEEL_ADDR {
+                return self.mouse.head_event().wheel as u32;
+            }
+            if address == crate::constants::KBD_EVT_STATUS_ADDR {
+                return self.keyboard.event_count();
+            }
+            if address == crate::constants::KBD_EVT_TYPE_ADDR {
+                return self.keyboard.head().kind;
+            }
+            if address == crate::constants::KBD_EVT_CODE_ADDR {
+                return self.keyboard.head().code;
+            }
+            if address == crate::constants::KBD_EVT_MODS_ADDR {
+                return self.keyboard.head().mods;
+            }
             if address == SERIAL_LSR_ADDR {
                 return self.serial.lsr();
             }
@@ -417,43 +439,5 @@ impl Machine {
 
     pub(super) fn read_stack_memory(&self, address: u32) -> u32 {
         self.bus_read_physical(address)
-    }
-
-    fn service_dma2d(&mut self, cmd: u32) {
-        if cmd == 1 {
-            let dest = *self
-                .io
-                .get(&crate::constants::DMA2D_DEST_ADDR)
-                .unwrap_or(&0);
-            let color = *self
-                .io
-                .get(&crate::constants::DMA2D_COLOR_ADDR)
-                .unwrap_or(&0);
-            let width = *self
-                .io
-                .get(&crate::constants::DMA2D_WIDTH_ADDR)
-                .unwrap_or(&0);
-            let height = *self
-                .io
-                .get(&crate::constants::DMA2D_HEIGHT_ADDR)
-                .unwrap_or(&0);
-            let stride = *self
-                .io
-                .get(&crate::constants::DMA2D_STRIDE_ADDR)
-                .unwrap_or(&(crate::constants::DISPLAY_WIDTH as u32));
-
-            if dest >= crate::constants::VRAM_BASE {
-                let start_idx = (dest - crate::constants::VRAM_BASE) as usize / 4;
-                let w = width as usize;
-                let h = height as usize;
-                let s = stride as usize;
-                for y in 0..h {
-                    let row_start = start_idx + y * s;
-                    if row_start + w <= self.vram.len() {
-                        self.vram[row_start..row_start + w].fill(color);
-                    }
-                }
-            }
-        }
     }
 }

@@ -120,6 +120,10 @@ impl Machine {
         let pump_due = self.last_window_pump.elapsed()
             >= Duration::from_nanos(1_000_000_000 / DISPLAY_REFRESH_HZ);
 
+        // Wheel motion and key events only surface inside window.update(), so
+        // they are collected on the pump cadence and attached to the sample
+        // taken right after.
+        let mut wheel_steps: i32 = 0;
         if pump_due {
             self.last_window_pump = Instant::now();
             if let Some(window) = &mut self.window {
@@ -130,20 +134,25 @@ impl Machine {
                     stats.win_update_ns += ns;
                     stats.win_update_calls += 1;
                 }
+                if let Some((_, dy)) = window.get_scroll_wheel() {
+                    // minifb reports X11 wheel clicks as +-1.0 per notch.
+                    wheel_steps = dy.round() as i32;
+                }
+            }
+            // Keystrokes the input callback collected during update().
+            let drained: Vec<_> = self.host_keys.borrow_mut().drain(..).collect();
+            for ev in drained {
+                self.push_key_event(ev.kind, ev.code, ev.mods);
             }
         }
 
         let t_ms = Instant::now();
         let sampled = match button_now {
             // One round trip gives position and buttons together.
-            Some((x, y, left)) => Some((
+            Some((x, y, buttons)) => Some((
                 x.clamp(0, DISPLAY_WIDTH as i32 - 1) as u32,
                 y.clamp(0, DISPLAY_HEIGHT as i32 - 1) as u32,
-                if left {
-                    crate::constants::MOUSE_BUTTON_LEFT
-                } else {
-                    0
-                },
+                buttons,
             )),
             None => self.window.as_ref().and_then(|window| {
                 let (mx, my) = window.get_mouse_pos(minifb::MouseMode::Clamp)?;
@@ -161,19 +170,17 @@ impl Machine {
                     };
                     (scaled as u32).min(fb as u32 - 1)
                 };
-                // Prefer the directly-queried button state; fall back to
-                // minifb's cache when there is no X connection of our own.
-                let buttons = match button_now {
-                    Some((_, _, true)) => crate::constants::MOUSE_BUTTON_LEFT,
-                    Some((_, _, false)) => 0,
-                    None => {
-                        if window.get_mouse_down(minifb::MouseButton::Left) {
-                            crate::constants::MOUSE_BUTTON_LEFT
-                        } else {
-                            0
-                        }
-                    }
-                };
+                // No X connection of our own: fall back to minifb's cache.
+                let mut buttons = 0;
+                if window.get_mouse_down(minifb::MouseButton::Left) {
+                    buttons |= crate::constants::MOUSE_BUTTON_LEFT;
+                }
+                if window.get_mouse_down(minifb::MouseButton::Right) {
+                    buttons |= crate::constants::MOUSE_BUTTON_RIGHT;
+                }
+                if window.get_mouse_down(minifb::MouseButton::Middle) {
+                    buttons |= crate::constants::MOUSE_BUTTON_MIDDLE;
+                }
                 Some((
                     scale(mx, win_w, DISPLAY_WIDTH),
                     scale(my, win_h, DISPLAY_HEIGHT),
@@ -187,7 +194,7 @@ impl Machine {
         }
 
         if let Some((nx, ny, buttons)) = sampled {
-            if self.mouse.update(nx, ny, buttons) {
+            if self.mouse.update_with_wheel(nx, ny, buttons, wheel_steps) {
                 self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
                 self.pending_irq = true;
             }

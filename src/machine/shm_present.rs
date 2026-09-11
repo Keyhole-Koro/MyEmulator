@@ -200,7 +200,8 @@ impl ShmPresenter {
     // last update() cached, so sampling the pointer through minifb forces the
     // expensive event-queue drain to run at the input cadence. XQueryPointer is
     // a single cheap round trip and needs no event pumping.
-    pub fn query_pointer(&mut self) -> Option<(i32, i32, bool)> {
+    // The returned button word uses the guest's MOUSE_BUTTON_* bits.
+    pub fn query_pointer(&mut self) -> Option<(i32, i32, u32)> {
         unsafe {
             let mut root: c_ulong = 0;
             let mut child: c_ulong = 0;
@@ -224,7 +225,19 @@ impl ShmPresenter {
                 return None; // pointer is on another screen
             }
             const BUTTON1_MASK: c_uint = 1 << 8;
-            Some((win_x, win_y, mask & BUTTON1_MASK != 0))
+            const BUTTON2_MASK: c_uint = 1 << 9;
+            const BUTTON3_MASK: c_uint = 1 << 10;
+            let mut buttons = 0u32;
+            if mask & BUTTON1_MASK != 0 {
+                buttons |= crate::constants::MOUSE_BUTTON_LEFT;
+            }
+            if mask & BUTTON2_MASK != 0 {
+                buttons |= crate::constants::MOUSE_BUTTON_MIDDLE;
+            }
+            if mask & BUTTON3_MASK != 0 {
+                buttons |= crate::constants::MOUSE_BUTTON_RIGHT;
+            }
+            Some((win_x, win_y, buttons))
         }
     }
 

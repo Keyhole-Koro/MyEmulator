@@ -58,3 +58,68 @@ Notes:
 - The instruction encoding remains compatible with the existing toolchain.
 - `OUT` to I/O address `0x24000000` prints a byte to host stdout (serial-like console).
 - `--break` and `--mem` accept decimal or hex addresses like `64` or `0x40`.
+
+## Display, input and screenshots (MYOS-014)
+
+The register map lives in `src/constants.rs`; the guest mirrors it in
+`system/MyOS/src/ui/graphics.mln`, `system/MyKernel/src/io/mouse.mln` and
+`system/MyKernel/src/io/keyboard.mln`.
+
+### 2D accelerator (DMA2D)
+
+`DEST/WIDTH/HEIGHT/STRIDE` describe the destination rectangle in VRAM,
+`COLOR` is `0x00RRGGBB` (opaque) or `0xAARRGGBB` where alpha matters, and
+writing `CMD` runs the operation:
+
+| CMD | Name | Extra registers | Effect |
+|---|---|---|---|
+| 1 | FILL | – | `dest = COLOR` |
+| 2 | BLEND_FILL | – | `dest = lerp(dest, COLOR, COLOR.a)` |
+| 3 | COPY | `SRC`, `SRC_STRIDE` (px) | copy pixels from RAM or VRAM (overlap-safe) |
+| 4 | COPY_BLEND | `SRC`, `SRC_STRIDE` (px) | per-pixel alpha from the source |
+| 5 | MASK_A8 | `SRC`, `SRC_STRIDE` (bytes) | 8-bit coverage × `COLOR` (anti-aliased glyphs) |
+| 6 / 7 | GRADIENT_V / GRADIENT_H | `COLOR2` | linear gradient `COLOR → COLOR2` |
+| 8 | ROUND_RECT | `RADIUS` | anti-aliased rounded rectangle |
+| 9 | ROUND_RECT_OUTLINE | `RADIUS`, `SPREAD` (thickness) | ring inside the rectangle |
+| 10 | SHADOW | `RADIUS`, `SPREAD` (blur) | soft drop shadow around the rectangle |
+
+`CLIP_X0/Y0/X1/Y1` is a scissor applied to every command (disabled while
+`X1 <= X0`), so the guest can repaint a damaged region without reshaping
+what it draws. The datapath is `src/machine/dma2d.rs`.
+
+### Keyboard and mouse
+
+Key presses, releases and host-translated characters land in one FIFO
+(`KBD_EVT_*`, `IRQ_CAUSE_KEYBOARD`) in the order they happened: a shifted
+keystroke arrives as `DOWN 'a'`, `CHAR 'A'`, `UP 'a'`. Printable keys use
+their lowercase ASCII as the code, everything else a `KEY_*` value `>= 0x100`.
+The mouse reports left/right/middle buttons (`MOUSE_BUTTON_*`) and wheel
+steps per event (`MOUSE_EVT_WHEEL`).
+
+### Screenshots
+
+```bash
+myemu -i build/firmware_linked.mbin --disk build/disk.img --headless --step 200000000 --screenshot shot.png
+make screenshot            # the same via qa/runners/run_system.py
+```
+
+PNG or PPM by extension; `--step` stops at the first idle (WFI), i.e. right
+after the desktop painted. In `--control-stdio` mode the `screenshot`
+command accepts either format too.
+
+### Control-stdio commands
+
+Besides `mouse.move/down/up`, `frame.wait`, `dom.snapshot` and `screenshot`
+(see `src/control_stdio.rs`): `mouse.down`/`mouse.up` take `"button":"right"`,
+`mouse.wheel` takes `"steps"`, `key.type` feeds `"text"` as CHAR events, and
+`key.press`/`key.release` take a `"key"` name (`enter`, `backspace`, `left`,
+…) or a single character. `frame.wait` now runs the guest until it presents
+a frame, so a following screenshot shows the reaction to the input.
+
+### Debugging preemption
+
+`MYEMU_IRQ_CHECK=1` snapshots the CPU state at every IRQ entry and reports,
+at the matching `iret`, any register or condition flag the handler failed to
+restore. It found the stale-SR-flags bug fixed in `registers.rs`
+(`status_register()`), which corrupted any computation interrupted between a
+compare and its branch.

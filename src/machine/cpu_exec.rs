@@ -242,6 +242,25 @@ impl Machine {
                 // fields together so its IE and condition bits cannot diverge.
                 self.restore_status_register(sr);
                 self.note_handler_return();
+                if let Some(stack) = self.irq_check.as_mut() {
+                    // A context switch resumes a different frame; only compare
+                    // when we are back on the frame that was interrupted.
+                    if let Some(pos) = stack.iter().rposition(|s| s.sp == self.stack_pointer) {
+                        let snap = stack.remove(pos);
+                        let mut diffs = Vec::new();
+                        if snap.pc != self.program_counter { diffs.push(format!("pc {:#x}->{:#x}", snap.pc, self.program_counter)); }
+                        if snap.bp != self.base_pointer { diffs.push(format!("bp {:#x}->{:#x}", snap.bp, self.base_pointer)); }
+                        if snap.lr != self.link_register { diffs.push(format!("lr {:#x}->{:#x}", snap.lr, self.link_register)); }
+                        for i in 0..8 {
+                            if snap.regs[i] != self.registers[i] { diffs.push(format!("r{} {:#x}->{:#x}", i, snap.regs[i], self.registers[i])); }
+                        }
+                        let flags = (self.carry_flag, self.zero_flag, self.sign_flag, self.overflow_flag);
+                        if snap.flags != flags { diffs.push(format!("flags {:?}->{:?}", snap.flags, flags)); }
+                        if !diffs.is_empty() {
+                            eprintln!("[irq-check] cause={:#x} sp={:#x} pushed_sr={:#x} popped_sr={:#x}: {}", snap.cause, snap.sp, snap.sr, sr, diffs.join(", "));
+                        }
+                    }
+                }
             }
             Opcode::Halt => {
                 self.halted = true;

@@ -20,8 +20,29 @@ impl Machine {
         self.program_counter
     }
 
+    // The architectural SR: the mode/IE bits kept in `status_register` plus
+    // the live condition flags. The ALU updates the flag fields directly and
+    // never touches `status_register`, so its condition bits are stale after
+    // the first flag change; every read of SR must recompose them. (Pushing
+    // the stale bits at IRQ entry restored wrong flags on iret, so code
+    // interrupted between a compare and its branch took the wrong path --
+    // visible as corrupted rendering under preemption.)
     pub fn status_register(&self) -> u32 {
-        self.status_register
+        use crate::constants::{SR_CARRY, SR_OVERFLOW, SR_SIGN, SR_ZERO};
+        let mut sr = self.status_register & !(SR_CARRY | SR_ZERO | SR_SIGN | SR_OVERFLOW);
+        if self.carry_flag {
+            sr |= SR_CARRY;
+        }
+        if self.zero_flag {
+            sr |= SR_ZERO;
+        }
+        if self.sign_flag {
+            sr |= SR_SIGN;
+        }
+        if self.overflow_flag {
+            sr |= SR_OVERFLOW;
+        }
+        sr
     }
 
     pub fn link_register(&self) -> u32 {
@@ -50,7 +71,7 @@ impl Machine {
             0x08 => Ok(self.program_counter),
             0x09 => Ok(self.stack_pointer),
             0x0A => Ok(self.base_pointer),
-            0x0B => Ok(self.status_register),
+            0x0B => Ok(self.status_register()),
             0x0C => Ok(self.link_register),
             _ => Err(format!("Invalid register index {}", reg)),
         }

@@ -59,8 +59,24 @@ impl Machine {
     // testable without a window; control_stdio.rs also calls this directly to
     // inject mouse.move/down/up commands in place of host window sampling.
     pub fn set_mouse_state(&mut self, x: u32, y: u32, buttons: u32) {
-        if self.mouse.update(x, y, buttons) {
+        self.set_mouse_state_wheel(x, y, buttons, 0);
+    }
+
+    pub fn set_mouse_state_wheel(&mut self, x: u32, y: u32, buttons: u32, wheel: i32) {
+        if self.mouse.update_with_wheel(x, y, buttons, wheel) {
             self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
+            self.pending_irq = true;
+        }
+    }
+
+    // Queue one keyboard event and raise the keyboard IRQ. poll_input feeds
+    // host keystrokes through here; control_stdio.rs injects key.* commands.
+    pub fn push_key_event(&mut self, kind: u32, code: u32, mods: u32) {
+        if self
+            .keyboard
+            .push(super::keyboard::KeyEvent { kind, code, mods })
+        {
+            self.irq_cause |= crate::constants::IRQ_CAUSE_KEYBOARD;
             self.pending_irq = true;
         }
     }
@@ -146,24 +162,26 @@ impl Machine {
                     std::mem::swap(&mut self.stack_pointer, &mut self.mmu.kernel_sp);
                 }
 
-                let mut sr = self.status_register;
-                if self.carry_flag {
-                    sr |= crate::constants::SR_CARRY;
-                }
-                if self.zero_flag {
-                    sr |= crate::constants::SR_ZERO;
-                }
-                if self.sign_flag {
-                    sr |= crate::constants::SR_SIGN;
-                }
-                if self.overflow_flag {
-                    sr |= crate::constants::SR_OVERFLOW;
-                }
+                // Architectural SR (mode/IE plus the *live* condition flags);
+                // see registers.rs for why it must be recomposed.
+                let sr = self.status_register();
 
                 // Switch to kernel mode and disable further interrupts before pushing to kernel stack
                 self.status_register &= !crate::constants::SR_USER;
                 self.set_interrupt_enable(false);
 
+                if let Some(stack) = self.irq_check.as_mut() {
+                    stack.push(super::IrqSnapshot {
+                        sp: self.stack_pointer,
+                        pc: self.program_counter,
+                        bp: self.base_pointer,
+                        lr: self.link_register,
+                        regs: self.registers,
+                        flags: (self.carry_flag, self.zero_flag, self.sign_flag, self.overflow_flag),
+                        sr,
+                        cause: self.irq_cause,
+                    });
+                }
                 self.push(self.program_counter)?;
                 self.push(sr)?;
                 self.program_counter = vector;
@@ -333,5 +351,22 @@ mod tests {
         m.bus_write(VRAM_BASE, 0x0011_2233);
         assert_eq!(m.front[0], 0x00AA_BBCC, "front unchanged until next swap");
         assert_eq!(m.bus_read(VRAM_BASE), 0x0011_2233, "back has the new pixel");
+    }
+
+    #[test]
+    fn irq_entry_pushes_live_flags_not_stale_sr_bits() {
+        use crate::constants::{IRQ_VECTOR_ADDR, SR_IE, SR_ZERO};
+        let mut m = Machine::new(false, true);
+        // A previous restore left ZERO set in the mirrored SR field ...
+        m.restore_status_register(SR_IE | SR_ZERO);
+        // ... but the ALU has since cleared the live flag.
+        m.zero_flag = false;
+        m.bus_write_physical(IRQ_VECTOR_ADDR, 0x1000);
+        m.irq_cause = crate::constants::IRQ_CAUSE_TIMER;
+        m.pending_irq = true;
+        m.try_dispatch_irq().unwrap();
+        let pushed_sr = m.bus_read_physical(m.stack_pointer);
+        assert_eq!(pushed_sr & SR_ZERO, 0, "stale ZERO bit must not be pushed");
+        assert_ne!(pushed_sr & SR_IE, 0, "IE at entry is recorded in the pushed SR");
     }
 }

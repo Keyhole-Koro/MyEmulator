@@ -21,6 +21,9 @@ pub struct Args {
     pub timer_interval: Option<u64>,
     // Report wall-clock time spent in each host display/input layer at exit.
     pub io_stats: bool,
+    // Save the displayed frame here when the run ends (after --step, a halt,
+    // or the window closing). PNG or PPM by extension.
+    pub screenshot: Option<String>,
 }
 
 fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
@@ -62,6 +65,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut profile_out = None;
     let mut timer_interval = None;
     let mut io_stats = false;
+    let mut screenshot = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -105,6 +109,12 @@ pub fn parse_args() -> Result<Args, String> {
             }
             "--regs" => {
                 print_regs = true;
+            }
+            "--screenshot" => {
+                screenshot = Some(
+                    args.next()
+                        .ok_or_else(|| "--screenshot requires a file path (.png or .ppm)".to_string())?,
+                );
             }
             "--mem" => {
                 let start_raw = args
@@ -175,5 +185,6 @@ pub fn parse_args() -> Result<Args, String> {
         profile_out,
         timer_interval,
         io_stats,
+        screenshot,
     })
 }

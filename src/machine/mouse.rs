@@ -8,6 +8,9 @@ pub struct MouseEvent {
     pub x: u32,
     pub y: u32,
     pub buttons: u32,
+    // Wheel steps that arrived with this sample (signed: positive = scroll
+    // up). Only ever non-zero on events queued through `update_with_wheel`.
+    pub wheel: i32,
 }
 
 // An event plus when the host sampled it, so the time it spent waiting to be
@@ -44,8 +47,15 @@ impl MouseDevice {
     // The change is also queued as an event so the guest can observe every
     // transition — e.g. a press and release between two reads — rather than
     // just the latest state.
+    #[cfg(test)]
     pub fn update(&mut self, x: u32, y: u32, buttons: u32) -> bool {
-        if x == self.x && y == self.y && buttons == self.buttons {
+        self.update_with_wheel(x, y, buttons, 0)
+    }
+
+    // As `update`, but a non-zero wheel delta is an event in its own right
+    // even when the pointer and buttons did not move.
+    pub fn update_with_wheel(&mut self, x: u32, y: u32, buttons: u32, wheel: i32) -> bool {
+        if x == self.x && y == self.y && buttons == self.buttons && wheel == 0 {
             return false;
         }
         self.x = x;
@@ -56,7 +66,12 @@ impl MouseDevice {
             self.dropped += 1;
         }
         self.events.push_back(StampedEvent {
-            event: MouseEvent { x, y, buttons },
+            event: MouseEvent {
+                x,
+                y,
+                buttons,
+                wheel,
+            },
             queued_at: Instant::now(),
         });
         true
@@ -73,6 +88,7 @@ impl MouseDevice {
             x: self.x,
             y: self.y,
             buttons: self.buttons,
+            wheel: 0,
         })
     }
 
@@ -104,6 +120,15 @@ mod tests {
         assert_eq!(m.head_event().buttons, 0, "then release");
         m.pop_event();
         assert_eq!(m.event_count(), 0);
+    }
+
+    #[test]
+    fn wheel_alone_is_an_event() {
+        let mut m = MouseDevice::new();
+        m.update(5, 5, 0);
+        assert!(m.update_with_wheel(5, 5, 0, -1));
+        m.pop_event();
+        assert_eq!(m.head_event().wheel, -1);
     }
 
     #[test]

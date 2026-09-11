@@ -9,10 +9,13 @@ use crate::constants::{
 
 mod cpu_exec;
 mod diagnostics;
+mod dma2d;
 mod interrupts;
+mod keyboard;
 mod memory_bus;
 pub mod mmu;
 mod mouse;
+mod png;
 mod profiler;
 mod registers;
 mod run_loop;
@@ -22,6 +25,7 @@ mod ssd;
 mod stack;
 mod timer;
 
+use keyboard::{HostKeyCallback, HostKeyQueue, KeyboardDevice};
 use mmu::Mmu;
 use mouse::MouseDevice;
 use profiler::Profiler;
@@ -195,6 +199,18 @@ impl IoStats {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct IrqSnapshot {
+    pub sp: u32,
+    pub pc: u32,
+    pub bp: u32,
+    pub lr: u32,
+    pub regs: [u32; 8],
+    pub flags: (bool, bool, bool, bool),
+    pub sr: u32,
+    pub cause: u32,
+}
+
 pub struct Machine {
     // Sparse byte-addressed RAM keeps behavior while avoiding eager 512MB allocation.
     ram: Vec<u8>,
@@ -207,6 +223,9 @@ pub struct Machine {
     // directly (see maybe_refresh_display).
     front: Vec<u32>,
     swapped: bool,
+    // Number of DISPLAY_SWAP writes so far; control_stdio's frame.wait runs
+    // the guest until this advances (a new frame was presented).
+    swap_count: u64,
 
     window: Option<Window>,
     // Fast scan-out path: blits frames from a shared memory segment the X
@@ -275,9 +294,17 @@ pub struct Machine {
     timer_handler_entered: Option<Instant>,
     slow_timer_handler_streak: u32,
     starvation_warned: bool,
+    // Debug (MYEMU_IRQ_CHECK=1): CPU state snapshot at IRQ entry, compared at
+    // the iret that returns to the same stack depth. Reports any register or
+    // flag the handler failed to restore.
+    irq_check: Option<Vec<IrqSnapshot>>,
     // Devices
     serial: SerialDevice,
     mouse: MouseDevice,
+    keyboard: KeyboardDevice,
+    // Key events minifb's input callback collected during the last
+    // window.update(); poll_input drains them into the keyboard device.
+    host_keys: HostKeyQueue,
     timer: TimerDevice,
     ssd: SsdDevice,
     pub mmu: Mmu,
@@ -285,7 +312,7 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(verbose: bool, headless: bool) -> Self {
-        let window = if !headless {
+        let mut window = if !headless {
             let mut win = Window::new(
                 "MyEmulator Display",
                 DISPLAY_WIDTH,
@@ -307,6 +334,13 @@ impl Machine {
             None
         };
 
+        let host_keys: HostKeyQueue = std::rc::Rc::new(std::cell::RefCell::new(
+            std::collections::VecDeque::new(),
+        ));
+        if let Some(win) = window.as_mut() {
+            win.set_input_callback(Box::new(HostKeyCallback::new(host_keys.clone())));
+        }
+
         // Attach the fast scan-out path to the window minifb just created.
         // minifb keeps handling the window and its input; only the per-frame
         // pixel transfer moves off the socket. None => fall back to minifb.
@@ -325,6 +359,7 @@ impl Machine {
             vram: vec![0; (VRAM_SIZE / 4) as usize],
             front: vec![0; (VRAM_SIZE / 4) as usize],
             swapped: false,
+            swap_count: 0,
             window,
             shm,
             cursor_x: 0,
@@ -360,8 +395,11 @@ impl Machine {
             timer_handler_entered: None,
             slow_timer_handler_streak: 0,
             starvation_warned: false,
+            irq_check: if std::env::var("MYEMU_IRQ_CHECK").is_ok() { Some(Vec::new()) } else { None },
             serial: SerialDevice::new(),
             mouse: MouseDevice::new(),
+            keyboard: KeyboardDevice::new(),
+            host_keys,
             timer: TimerDevice::new(),
             ssd: SsdDevice::disabled(),
             mmu: Mmu::new(),

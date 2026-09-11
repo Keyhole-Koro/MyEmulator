@@ -65,6 +65,11 @@ pub fn run() -> Result<(), String> {
         println!("Profile written to {}", profile_path);
     }
 
+    if let Some(shot) = &args.screenshot {
+        machine.write_screenshot(shot)?;
+        println!("Screenshot written to {}", shot);
+    }
+
     machine.report_io_stats();
 
     if !debug_mode {

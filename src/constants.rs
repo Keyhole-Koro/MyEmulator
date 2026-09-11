@@ -46,14 +46,84 @@ pub const SSD_BLOCK_SIZE: usize = 65536;
 pub const SSD_BLOCK_COUNT: usize = 16384;
 pub const SSD_DISK_SIZE: usize = SSD_BLOCK_SIZE * SSD_BLOCK_COUNT; // 1 GB
 
+// 2D accelerator. DEST/WIDTH/HEIGHT/STRIDE describe the destination rectangle
+// (STRIDE in pixels); COLOR is 0x00RRGGBB for opaque commands and 0xAARRGGBB
+// where alpha is involved. SRC/SRC_STRIDE describe the source for the copy and
+// mask commands (see DMA2D_CMD_* for units). Writing CMD runs the operation.
 pub const DMA2D_DEST_ADDR: u32 = IO_BASE + 0x20;
 pub const DMA2D_COLOR_ADDR: u32 = IO_BASE + 0x24;
 pub const DMA2D_WIDTH_ADDR: u32 = IO_BASE + 0x28;
 pub const DMA2D_HEIGHT_ADDR: u32 = IO_BASE + 0x2C;
 pub const DMA2D_STRIDE_ADDR: u32 = IO_BASE + 0x30;
-pub const DMA2D_CMD_ADDR: u32 = IO_BASE + 0x34; // W: 1 = fill_rect
+pub const DMA2D_CMD_ADDR: u32 = IO_BASE + 0x34; // W: DMA2D_CMD_*
 
 pub const DISPLAY_SWAP_ADDR: u32 = IO_BASE + 0x38;
+
+pub const DMA2D_SRC_ADDR: u32 = IO_BASE + 0x90; // source: RAM or VRAM address
+pub const DMA2D_SRC_STRIDE_ADDR: u32 = IO_BASE + 0x94; // COPY*: pixels, MASK_A8: bytes
+pub const DMA2D_COLOR2_ADDR: u32 = IO_BASE + 0x98; // GRADIENT_*: end colour
+pub const DMA2D_RADIUS_ADDR: u32 = IO_BASE + 0x9C; // ROUND_RECT*/SHADOW: corner radius (px)
+pub const DMA2D_SPREAD_ADDR: u32 = IO_BASE + 0xB8; // ROUND_RECT_OUTLINE: thickness; SHADOW: blur size
+
+// Scissor rectangle, applied to every command: pixels outside
+// [X0, X1) x [Y0, Y1) are not written. X1 <= X0 (the reset state) disables it.
+// Lets the guest clip a rounded rectangle without changing its shape.
+pub const DMA2D_CLIP_X0_ADDR: u32 = IO_BASE + 0xC0;
+pub const DMA2D_CLIP_Y0_ADDR: u32 = IO_BASE + 0xC4;
+pub const DMA2D_CLIP_X1_ADDR: u32 = IO_BASE + 0xC8;
+pub const DMA2D_CLIP_Y1_ADDR: u32 = IO_BASE + 0xCC;
+
+pub const DMA2D_CMD_FILL: u32 = 1; // dest = COLOR
+pub const DMA2D_CMD_BLEND_FILL: u32 = 2; // dest = lerp(dest, COLOR.rgb, COLOR.a)
+pub const DMA2D_CMD_COPY: u32 = 3; // dest = src (0x00RRGGBB, alpha ignored)
+pub const DMA2D_CMD_COPY_BLEND: u32 = 4; // dest = lerp(dest, src.rgb, src.a)
+pub const DMA2D_CMD_MASK_A8: u32 = 5; // dest = lerp(dest, COLOR.rgb, src byte)
+pub const DMA2D_CMD_GRADIENT_V: u32 = 6; // rows fade COLOR -> COLOR2
+pub const DMA2D_CMD_GRADIENT_H: u32 = 7; // columns fade COLOR -> COLOR2
+pub const DMA2D_CMD_ROUND_RECT: u32 = 8; // anti-aliased rounded rect, COLOR with alpha (0 = opaque)
+pub const DMA2D_CMD_ROUND_RECT_OUTLINE: u32 = 9; // as above, ring of SPREAD px inside the rect
+pub const DMA2D_CMD_SHADOW: u32 = 10; // soft shadow of the rounded rect, fading over SPREAD px outside it
+
+// Keyboard. Every host key press/release and every translated character lands
+// in a FIFO in the order it happened; STATUS is the queued count, TYPE/CODE/
+// MODS read the head event, writing POP consumes it.
+pub const KBD_EVT_STATUS_ADDR: u32 = IO_BASE + 0xA0;
+pub const KBD_EVT_TYPE_ADDR: u32 = IO_BASE + 0xA4;
+pub const KBD_EVT_CODE_ADDR: u32 = IO_BASE + 0xA8;
+pub const KBD_EVT_MODS_ADDR: u32 = IO_BASE + 0xAC;
+pub const KBD_EVT_POP_ADDR: u32 = IO_BASE + 0xB0;
+pub const KBD_EVENT_QUEUE_DEPTH: usize = 64;
+pub const KBD_EVT_DOWN: u32 = 1;
+pub const KBD_EVT_UP: u32 = 2;
+pub const KBD_EVT_CHAR: u32 = 3; // CODE = unicode code point (ASCII in practice)
+pub const KBD_MOD_SHIFT: u32 = 1 << 0;
+pub const KBD_MOD_CTRL: u32 = 1 << 1;
+pub const KBD_MOD_ALT: u32 = 1 << 2;
+
+// Key codes for KBD_EVT_DOWN/UP. Printable keys use their lowercase ASCII;
+// everything else is a code >= 0x100 so the guest can tell them apart.
+pub const KEY_BACKSPACE: u32 = 8;
+pub const KEY_TAB: u32 = 9;
+pub const KEY_ENTER: u32 = 13;
+pub const KEY_ESCAPE: u32 = 27;
+pub const KEY_SPACE: u32 = 32;
+pub const KEY_DELETE: u32 = 127;
+pub const KEY_LEFT: u32 = 0x101;
+pub const KEY_RIGHT: u32 = 0x102;
+pub const KEY_UP: u32 = 0x103;
+pub const KEY_DOWN: u32 = 0x104;
+pub const KEY_HOME: u32 = 0x105;
+pub const KEY_END: u32 = 0x106;
+pub const KEY_PAGE_UP: u32 = 0x107;
+pub const KEY_PAGE_DOWN: u32 = 0x108;
+pub const KEY_SHIFT: u32 = 0x110;
+pub const KEY_CTRL: u32 = 0x111;
+pub const KEY_ALT: u32 = 0x112;
+pub const KEY_F1: u32 = 0x121; // F1..F12 = 0x121..0x12C
+
+// Wheel steps carried by the head mouse event (signed; positive = away from
+// the user, i.e. scroll up).
+pub const MOUSE_EVT_WHEEL_ADDR: u32 = IO_BASE + 0xB4;
 
 pub const CURSOR_X_ADDR: u32 = IO_BASE + 0x60;
 pub const CURSOR_Y_ADDR: u32 = IO_BASE + 0x64;
@@ -71,6 +141,8 @@ pub const MOUSE_EVT_POP_ADDR: u32 = IO_BASE + 0x5C;
 pub const MOUSE_EVENT_QUEUE_DEPTH: usize = 64;
 
 pub const MOUSE_BUTTON_LEFT: u32 = 0x1;
+pub const MOUSE_BUTTON_RIGHT: u32 = 0x2;
+pub const MOUSE_BUTTON_MIDDLE: u32 = 0x4;
 pub const MOUSE_POLL_MS: u64 = 2;
 
 pub const IRQ_VECTOR_ADDR: u32 = IO_BASE + 0x80;
@@ -82,6 +154,7 @@ pub const IRQ_CAUSE_SSD: u32 = 1 << 3;
 pub const IRQ_CAUSE_SYSCALL: u32 = 1 << 4;
 pub const IRQ_CAUSE_PAGE_FAULT: u32 = 1 << 5;
 pub const IRQ_CAUSE_PRIVILEGE_VIOLATION: u32 = 1 << 6;
+pub const IRQ_CAUSE_KEYBOARD: u32 = 1 << 7;
 
 // MMU & Virtual Memory MMIO registers
 pub const MMU_CTRL_ADDR: u32 = IO_BASE + 0x100; // R/W: Bit 0 = Paging Enable

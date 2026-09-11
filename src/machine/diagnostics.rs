@@ -16,20 +16,54 @@ impl Machine {
         Ok(())
     }
 
-    // MYOS-004: dump the current scanout buffer (front if the guest has
-    // swapped at least once, else the back buffer -- mirrors
-    // maybe_refresh_display's choice) as a binary PPM (P6). Plain PPM rather
-    // than PNG: no image-encoding crate is vendored, and P6 needs none --
-    // just a header and raw RGB bytes, trivially converted with any image
-    // tool if a client wants PNG.
-    pub fn write_ppm_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
-        use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-
-        let base: &[u32] = if self.swapped {
+    // The buffer the display is showing: front if the guest has swapped at
+    // least once, else the back buffer (mirrors maybe_refresh_display).
+    fn scanout_pixels(&self) -> &[u32] {
+        if self.swapped {
             &self.front
         } else {
             &self.vram
-        };
+        }
+    }
+
+    // Save the displayed frame. The extension picks the format: `.png` writes
+    // a PNG (see png.rs), anything else a binary PPM (P6). Neither needs an
+    // image crate. The hardware cursor is not composited in -- this is what
+    // is in VRAM, which is what the guest's renderer is responsible for.
+    pub fn write_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        let is_png = path
+            .as_ref()
+            .extension()
+            .map(|e| e.eq_ignore_ascii_case("png"))
+            .unwrap_or(false);
+        if is_png {
+            self.write_png_screenshot(path)
+        } else {
+            self.write_ppm_screenshot(path)
+        }
+    }
+
+    pub fn write_png_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+        let file = File::create(&path).map_err(|e| {
+            format!(
+                "Unable to open screenshot {}: {}",
+                path.as_ref().display(),
+                e
+            )
+        })?;
+        let mut out = std::io::BufWriter::new(file);
+        super::png::write_png(&mut out, self.scanout_pixels(), DISPLAY_WIDTH, DISPLAY_HEIGHT)
+            .map_err(|e| e.to_string())?;
+        out.flush().map_err(|e| e.to_string())
+    }
+
+    // MYOS-004: dump the current scanout buffer as a binary PPM (P6): just a
+    // header and raw RGB bytes.
+    pub fn write_ppm_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+
+        let base = self.scanout_pixels();
         let mut out = File::create(&path).map_err(|e| {
             format!(
                 "Unable to open screenshot {}: {}",
@@ -48,6 +82,10 @@ impl Machine {
         }
         out.write_all(&rgb).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub fn swap_count(&self) -> u64 {
+        self.swap_count
     }
 
     // MYOS-004: take everything transmitted over serial since the last drain.
@@ -152,7 +190,7 @@ impl Machine {
         report.push_str(&format!("SP: 0x{:08X}\n", self.stack_pointer));
         report.push_str(&format!("BP: 0x{:08X}\n", self.base_pointer));
         report.push_str(&format!("PC: 0x{:08X}\n", self.program_counter));
-        report.push_str(&format!("SR: 0x{:08X}\n", self.status_register));
+        report.push_str(&format!("SR: 0x{:08X}\n", self.status_register()));
         report.push_str(&format!("LR: 0x{:08X}\n", self.link_register));
         report.push_str(&format!(
             "FLAGS: C={} Z={} S={} O={}\n",
@@ -168,7 +206,7 @@ impl Machine {
         println!("PC: 0x{:x}", self.program_counter);
         println!("SP: 0x{:x}", self.stack_pointer);
         println!("BP: 0x{:x}", self.base_pointer);
-        println!("SR: 0x{:x}", self.status_register);
+        println!("SR: 0x{:x}", self.status_register());
         println!("LR: 0x{:x}", self.link_register);
         println!(
             "Flags: Zero: {}, Carry: {}, Sign: {}, Overflow: {}",
