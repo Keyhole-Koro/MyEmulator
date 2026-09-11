@@ -163,6 +163,17 @@ pub const MMU_FAULT_ADDR: u32 = IO_BASE + 0x108; // R: Virtual address causing p
 pub const MMU_FAULT_STATUS_ADDR: u32 = IO_BASE + 0x10C; // R: 0=Read, 1=Write, 2=Exec, 3=Priv
 pub const KERNEL_SP_ADDR: u32 = IO_BASE + 0x110; // R/W: Kernel Stack Pointer for user traps
 
+// Automation bridge. This is deliberately separate from the serial device:
+// control-mode DOM inspection must never depend on a shell prompt or share a
+// byte stream with kernel logs. The host writes one command code, the kernel
+// polls it and streams a response back through TX, then writes DONE.
+pub const AUTOMATION_RX_ADDR: u32 = IO_BASE + 0x120; // R: command code, consumes it
+pub const AUTOMATION_STATUS_ADDR: u32 = IO_BASE + 0x124; // bit0=request, bit1=response done
+pub const AUTOMATION_TX_ADDR: u32 = IO_BASE + 0x128; // W: response byte
+pub const AUTOMATION_DONE_ADDR: u32 = IO_BASE + 0x12C; // W nonzero: response complete
+pub const AUTOMATION_STATUS_REQUEST: u32 = 1;
+pub const AUTOMATION_STATUS_DONE: u32 = 2;
+
 // Status register bits
 pub const SR_IE: u32 = 1 << 0; // 0b0000_0001
 pub const SR_CARRY: u32 = 1 << 1; // 0b0000_0010

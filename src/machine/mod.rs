@@ -261,11 +261,12 @@ pub struct Machine {
     registers: [u32; 8],
     verbose: bool,
     serial_log: Option<File>,
-    // every byte transmitted over serial (mirrors what serial_log
-    // would hold), for control_stdio.rs to drain and scan for the DOM
-    // snapshot markers without re-reading a file. Unused otherwise -- cheap
-    // to always fill in, so no headless/control_stdio gate is needed.
-    serial_tx_buf: Vec<u8>,
+    // Host-only automation MMIO bridge. It is intentionally not represented
+    // by the generic io map: RX consumes a request and TX is a byte stream.
+    automation_request: Option<u32>,
+    automation_tx_buf: Vec<u8>,
+    automation_done: bool,
+    control_stdio: bool,
     trace_log: Option<File>,
     // Instruction-level profiler. None unless --profile is passed; when present
     // the run loop and memory bus feed it one event per instruction/access.
@@ -375,7 +376,10 @@ impl Machine {
             registers: [0; 8],
             verbose,
             serial_log: None,
-            serial_tx_buf: Vec::new(),
+            automation_request: None,
+            automation_tx_buf: Vec::new(),
+            automation_done: false,
+            control_stdio: false,
             trace_log: None,
             profiler: None,
             stack_pointer: RAM_END_EXCLUSIVE,
@@ -448,6 +452,29 @@ impl Machine {
 
     pub fn set_timer_interval(&mut self, micros: u64) {
         self.timer.set_period_micros(micros);
+    }
+
+    pub fn enable_control_stdio(&mut self) {
+        self.control_stdio = true;
+    }
+
+    pub fn automation_request(&mut self, command: u32) -> Result<(), String> {
+        if self.automation_request.is_some() {
+            return Err("automation request already in flight".to_string());
+        }
+        self.automation_request = Some(command);
+        self.automation_tx_buf.clear();
+        self.automation_done = false;
+        Ok(())
+    }
+
+    pub fn automation_done(&self) -> bool {
+        self.automation_done
+    }
+
+    pub fn take_automation_response(&mut self) -> Vec<u8> {
+        self.automation_done = false;
+        std::mem::take(&mut self.automation_tx_buf)
     }
 
     pub fn enable_io_stats(&mut self) {

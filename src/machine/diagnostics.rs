@@ -88,13 +88,6 @@ impl Machine {
         self.swap_count
     }
 
-    // MYOS-004: take everything transmitted over serial since the last drain.
-    // control_stdio.rs uses this to scan for the DOM snapshot markers without
-    // needing a separate response channel from the guest.
-    pub fn drain_serial_tx(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.serial_tx_buf)
-    }
-
     pub fn set_trace_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path_ref = path.as_ref();
         self.trace_log = Some(

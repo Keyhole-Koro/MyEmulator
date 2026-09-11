@@ -1,6 +1,8 @@
 use std::io::{self, Write};
 
 use crate::constants::{
+    AUTOMATION_DONE_ADDR, AUTOMATION_RX_ADDR, AUTOMATION_STATUS_ADDR, AUTOMATION_STATUS_DONE,
+    AUTOMATION_STATUS_REQUEST, AUTOMATION_TX_ADDR,
     is_io_address, is_ram_address, is_vram_address, IRQ_CAUSE_ADDR, IRQ_CAUSE_PAGE_FAULT,
     IRQ_CAUSE_PRIVILEGE_VIOLATION, KERNEL_SP_ADDR, MMU_CTRL_ADDR, MMU_FAULT_ADDR,
     MMU_FAULT_STATUS_ADDR, MMU_PDBR_ADDR, SERIAL_LSR_ADDR, SERIAL_RX_ADDR, SERIAL_TX_ADDR,
@@ -57,6 +59,9 @@ impl Machine {
         if paddr == SERIAL_RX_ADDR {
             return self.serial.read_rx();
         }
+        if paddr == AUTOMATION_RX_ADDR {
+            return self.automation_request.take().unwrap_or(0);
+        }
         self.bus_read_physical(paddr)
     }
 
@@ -71,6 +76,9 @@ impl Machine {
 
         if paddr == SERIAL_RX_ADDR {
             return self.serial.read_rx() as u8;
+        }
+        if paddr == AUTOMATION_RX_ADDR {
+            return self.automation_request.take().unwrap_or(0) as u8;
         }
         self.bus_read_byte_physical(paddr)
     }
@@ -123,6 +131,16 @@ impl Machine {
                 }
                 KERNEL_SP_ADDR => {
                     self.mmu.kernel_sp = value;
+                    return;
+                }
+                AUTOMATION_TX_ADDR => {
+                    self.automation_tx_buf.push((value & 0xFF) as u8);
+                    return;
+                }
+                AUTOMATION_DONE_ADDR => {
+                    if value != 0 {
+                        self.automation_done = true;
+                    }
                     return;
                 }
                 SSD_BLOCK_ADDR => {
@@ -238,13 +256,20 @@ impl Machine {
             self.io.insert(address, value);
             if address == SERIAL_TX_ADDR {
                 let ch = (value & 0xFF) as u8;
-                print!("{}", char::from(ch));
-                self.serial_tx_buf.push(ch);
+                if self.control_stdio {
+                    eprint!("{}", char::from(ch));
+                } else {
+                    print!("{}", char::from(ch));
+                }
                 if let Some(serial_log) = self.serial_log.as_mut() {
                     let _ = serial_log.write_all(&[ch]);
                     let _ = serial_log.flush();
                 }
-                let _ = io::stdout().flush();
+                if self.control_stdio {
+                    let _ = io::stderr().flush();
+                } else {
+                    let _ = io::stdout().flush();
+                }
             }
         }
     }
@@ -290,6 +315,16 @@ impl Machine {
             }
             if address == KERNEL_SP_ADDR {
                 return self.mmu.kernel_sp;
+            }
+
+            if address == AUTOMATION_STATUS_ADDR {
+                let mut status = 0;
+                if self.automation_request.is_some() { status |= AUTOMATION_STATUS_REQUEST; }
+                if self.automation_done { status |= AUTOMATION_STATUS_DONE; }
+                return status;
+            }
+            if address == AUTOMATION_RX_ADDR {
+                return self.automation_request.unwrap_or(0);
             }
 
             if address == SSD_STATUS_ADDR {
@@ -367,14 +402,21 @@ impl Machine {
         if is_io_address(address) {
             self.io.insert(address, value as u32);
             if address == SERIAL_TX_ADDR {
-                print!("{}", char::from(value));
-                self.serial_tx_buf.push(value);
+                if self.control_stdio {
+                    eprint!("{}", char::from(value));
+                } else {
+                    print!("{}", char::from(value));
+                }
                 if let Some(serial_log) = self.serial_log.as_mut() {
                     let _ = serial_log.write_all(&[value]);
                     let _ = serial_log.flush();
                 }
                 if value == b'\n' {
-                    let _ = io::stdout().flush();
+                    if self.control_stdio {
+                        let _ = io::stderr().flush();
+                    } else {
+                        let _ = io::stdout().flush();
+                    }
                 }
             }
         }
@@ -408,7 +450,14 @@ impl Machine {
         }
 
         if is_io_address(address) {
-            let value = if address == SERIAL_LSR_ADDR {
+            let value = if address == AUTOMATION_STATUS_ADDR {
+                let mut status = 0;
+                if self.automation_request.is_some() { status |= AUTOMATION_STATUS_REQUEST; }
+                if self.automation_done { status |= AUTOMATION_STATUS_DONE; }
+                status
+            } else if address == AUTOMATION_RX_ADDR {
+                self.automation_request.unwrap_or(0)
+            } else if address == SERIAL_LSR_ADDR {
                 self.serial.lsr()
             } else {
                 *self.io.get(&address).unwrap_or(&0xFFFF_FFFF)

@@ -37,6 +37,7 @@ impl Machine {
     // without the stdin thread; control_stdio.rs also uses this directly to
     // inject synthetic keystrokes (e.g. typing "dom\r" at the shell) without
     // going through the raw-stdin-forwarding thread.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn ingest_serial_bytes(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;

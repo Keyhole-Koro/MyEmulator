@@ -203,15 +203,15 @@ impl Machine {
     // MYOS-004: advance the machine for up to max_instructions (or until it
     // halts, or a wall-clock safety cap elapses, whichever comes first) and
     // return. Used by control_stdio.rs to give the guest a chance to react to
-    // an injected input (mouse event, "dom" keystroke) between commands.
+    // an injected input event between automation commands.
     //
     // This mirrors execute_with_debug's core loop (poll devices, dispatch
     // IRQs, execute, sleep through WFI) but skips everything control_stdio
     // has no use for -- trace/profiler/breakpoint handling and the [STEP]
     // status prints, which would otherwise land on the same stdout the
     // client is reading command responses from. It intentionally does NOT
-    // call start_serial_input: control_stdio owns stdin itself and injects
-    // bytes via ingest_serial_bytes instead of the raw-forwarding thread.
+    // call start_serial_input: control_stdio owns stdin itself and uses the
+    // dedicated automation MMIO bridge rather than the serial device.
     pub fn run_frame_budget(&mut self, max_instructions: u64) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_millis(50);
         let mut executed = 0u64;

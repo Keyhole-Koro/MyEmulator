@@ -7,16 +7,27 @@ use std::path::PathBuf;
 pub fn run() -> Result<(), String> {
     let args = parse_args()?;
 
-    println!("Loading binary from {}", args.input_file);
+    if args.control_stdio {
+        eprintln!("Loading binary from {}", args.input_file);
+    } else {
+        println!("Loading binary from {}", args.input_file);
+    }
     let binary = read_binary_file(&args.input_file)?;
 
     let mut machine = Machine::new(args.verbose, args.headless);
+    if args.control_stdio {
+        machine.enable_control_stdio();
+    }
     if let Some(interval) = args.timer_interval {
         machine.set_timer_interval(interval);
     }
     if let Some(disk) = &args.disk_file {
         machine.load_disk(PathBuf::from(disk))?;
-        println!("Mounted disk image {}", disk);
+        if args.control_stdio {
+            eprintln!("Mounted disk image {}", disk);
+        } else {
+            println!("Mounted disk image {}", disk);
+        }
     }
     let log_dir = if args.log_dir.is_empty() {
         None

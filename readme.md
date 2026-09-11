@@ -107,14 +107,14 @@ PNG or PPM by extension; `--step` stops at the first idle (WFI), i.e. right
 after the desktop painted. In `--control-stdio` mode the `screenshot`
 command accepts either format too.
 
-### Control-stdio commands
+### Control-stdio protocol
 
-Besides `mouse.move/down/up`, `frame.wait`, `dom.snapshot` and `screenshot`
-(see `src/control_stdio.rs`): `mouse.down`/`mouse.up` take `"button":"right"`,
-`mouse.wheel` takes `"steps"`, `key.type` feeds `"text"` as CHAR events, and
-`key.press`/`key.release` take a `"key"` name (`enter`, `backspace`, `left`,
-…) or a single character. `frame.wait` now runs the guest until it presents
-a frame, so a following screenshot shows the reaction to the input.
+`--control-stdio` is protocol v2: stdin/stdout carry only request-ID JSON
+Lines, while guest serial output goes to stderr. Start with `session.hello`,
+then use `os.ready`, `dom.snapshot`, `input.pointer.sequence`,
+`input.key.type`, `input.key.press`, and `screen.screenshot` (see
+`src/control_stdio.rs`). DOM snapshots cross a dedicated automation MMIO
+bridge; they do not type a command into the OS shell or parse serial markers.
 
 ### Debugging preemption
 
