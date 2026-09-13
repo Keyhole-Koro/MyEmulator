@@ -27,11 +27,19 @@ impl Machine {
         }
     }
 
+    // The stack pointer is a virtual address once paging is on (a user
+    // process's stack sits at 0x7FFFF000), so the physical RAM bounds only
+    // apply while the MMU is off; with it on, bus_write/bus_load translate
+    // and raise a page fault for an unmapped page.
+    fn stack_in_bounds(&self, sp: u32) -> bool {
+        if self.mmu.enabled {
+            return true;
+        }
+        sp >= RAM_START + 4 && sp <= RAM_END_EXCLUSIVE
+    }
+
     pub(super) fn push(&mut self, value: u32) -> Result<(), String> {
-        if self.stack_pointer < RAM_START + 4
-            || self.stack_pointer > RAM_END_EXCLUSIVE
-            || !self.stack_pointer.is_multiple_of(4)
-        {
+        if !self.stack_in_bounds(self.stack_pointer) || !self.stack_pointer.is_multiple_of(4) {
             return Err(format!(
                 "Invalid stack pointer for push: 0x{:x}",
                 self.stack_pointer
@@ -52,7 +60,12 @@ impl Machine {
     }
 
     pub(super) fn pop(&mut self) -> Result<u32, String> {
-        if self.stack_pointer >= RAM_END_EXCLUSIVE || !self.stack_pointer.is_multiple_of(4) {
+        let underflow = if self.mmu.enabled {
+            false
+        } else {
+            self.stack_pointer >= RAM_END_EXCLUSIVE
+        };
+        if underflow || !self.stack_pointer.is_multiple_of(4) {
             return Err(format!(
                 "Stack underflow at address: 0x{:x} (STACKBASE: 0x{:x})",
                 self.stack_pointer, RAM_END_EXCLUSIVE

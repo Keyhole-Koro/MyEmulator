@@ -219,13 +219,15 @@ impl Machine {
         const BATCH_SIZE: u64 = 1_000;
 
         while !self.halted && executed < max_instructions {
-            if Instant::now() >= deadline {
-                break;
-            }
-
             batch_counter += 1;
             if batch_counter >= BATCH_SIZE || self.waiting_for_interrupt {
                 batch_counter = 0;
+                // Check the wall-clock deadline on batch boundaries only:
+                // Instant::now() per instruction cost ~10x and starved the
+                // guest during the heavy boot-time page mapping (MYOS-015).
+                if Instant::now() >= deadline {
+                    break;
+                }
                 self.poll_devices();
                 self.poll_input(); // no-op headless
                 if !self.maybe_refresh_display(false) {
@@ -252,13 +254,35 @@ impl Machine {
                 Ok(inst) => inst,
                 Err(()) => continue,
             };
+            self.note_pc();
             self.program_counter = self.program_counter.wrapping_add(4);
-            self.execute_instruction(instruction)?;
+            if let Err(e) = self.execute_instruction(instruction) {
+                return Err(self.describe_error(e));
+            }
             executed += 1;
             self.instrs_retired = self.instrs_retired.wrapping_add(1);
         }
 
         Ok(())
+    }
+
+    fn note_pc(&mut self) {
+        if let Some((ring, idx)) = self.pc_ring.as_mut() {
+            ring[*idx] = self.program_counter;
+            *idx = (*idx + 1) % ring.len();
+        }
+    }
+
+    // Append the recent-PC ring (when enabled) to a machine error message.
+    pub fn describe_error(&self, e: String) -> String {
+        let Some((ring, idx)) = self.pc_ring.as_ref() else {
+            return e;
+        };
+        let mut pcs = Vec::new();
+        for i in 0..ring.len() {
+            pcs.push(format!("{:x}", ring[(idx + i) % ring.len()]));
+        }
+        format!("{} | recent pcs: {}", e, pcs.join(" "))
     }
 
     pub fn set_instruction_pointer(&mut self, address: u32) {

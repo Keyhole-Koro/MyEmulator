@@ -14,7 +14,11 @@ pub fn run() -> Result<(), String> {
     }
     let binary = read_binary_file(&args.input_file)?;
 
-    let mut machine = Machine::new(args.verbose, args.headless);
+    // Control-stdio drives the guest through the automation bridge and never
+    // shows a window; forcing headless keeps X11 scanout and input polling
+    // off the guest's critical path (a windowed control-stdio run mapped
+    // VRAM ~10x slower, so os.ready timed out during boot -- MYOS-015).
+    let mut machine = Machine::new(args.verbose, args.headless || args.control_stdio);
     if args.control_stdio {
         machine.enable_control_stdio();
     }

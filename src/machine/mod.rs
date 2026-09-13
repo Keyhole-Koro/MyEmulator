@@ -299,6 +299,9 @@ pub struct Machine {
     // the iret that returns to the same stack depth. Reports any register or
     // flag the handler failed to restore.
     irq_check: Option<Vec<IrqSnapshot>>,
+    // Debug (MYEMU_PC_RING=1): the last 64 program counters, printed with a
+    // machine error so a crash can be traced back without a full trace log.
+    pc_ring: Option<(Vec<u32>, usize)>,
     // Devices
     serial: SerialDevice,
     mouse: MouseDevice,
@@ -400,6 +403,7 @@ impl Machine {
             slow_timer_handler_streak: 0,
             starvation_warned: false,
             irq_check: if std::env::var("MYEMU_IRQ_CHECK").is_ok() { Some(Vec::new()) } else { None },
+            pc_ring: std::env::var("MYEMU_PC_RING").ok().map(|v| (vec![0u32; v.parse::<usize>().ok().filter(|n| *n > 0).unwrap_or(64)], 0)),
             serial: SerialDevice::new(),
             mouse: MouseDevice::new(),
             keyboard: KeyboardDevice::new(),

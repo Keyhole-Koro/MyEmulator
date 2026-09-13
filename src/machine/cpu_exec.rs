@@ -22,7 +22,13 @@ impl Machine {
         }
 
         let Ok(opcode) = Opcode::try_from(inst.opcode) else {
-            return Err(format!("Unknown opcode: 0x{:X}", inst.opcode));
+            return Err(format!(
+                "Unknown opcode: 0x{:X} at pc=0x{:08X} (sp=0x{:08X}, lr=0x{:08X})",
+                inst.opcode,
+                self.program_counter.wrapping_sub(4),
+                self.stack_pointer,
+                self.link_register
+            ));
         };
 
         if self.is_user_mode() {

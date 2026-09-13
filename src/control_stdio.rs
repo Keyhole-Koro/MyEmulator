@@ -79,7 +79,7 @@ fn bridge_request(machine: &mut Machine, command: u32) -> Result<Vec<u8>, (&'sta
         machine.run_frame_budget(COMMAND_BUDGET).map_err(|e| ("machine_error", e, Value::Null))?;
         if machine.automation_done() { return Ok(machine.take_automation_response()); }
     }
-    Err(("not_ready", "timed out waiting for the MyOS automation service".to_string(), Value::Null))
+    Err(("not_ready", machine.describe_error("timed out waiting for the MyOS automation service".to_string()), Value::Null))
 }
 
 fn dom_snapshot(machine: &mut Machine) -> Result<Value, (&'static str, String, Value)> {
