@@ -1,6 +1,6 @@
+use super::Machine;
 use super::cpu::CpuError;
 use super::mmu::MmuFault;
-use super::Machine;
 
 impl Machine {
     pub fn get_data_register(&self, index: usize) -> Result<u32, String> {

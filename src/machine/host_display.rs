@@ -1,8 +1,8 @@
 //! Window-system integration and input polling, outside CPU execution.
 use super::{
+    Machine,
     keyboard::{HostKeyCallback, HostKeyQueue},
     shm_present::ShmPresenter,
-    Machine,
 };
 use crate::constants::{DISPLAY_HEIGHT, DISPLAY_REFRESH_HZ, DISPLAY_WIDTH};
 use minifb::{Window, WindowOptions};
@@ -40,22 +40,22 @@ impl Machine {
             // Scan out the front buffer once a program has swapped at least
             // once; otherwise present the back buffer directly so programs that
             // never double-buffer still show their drawing.
-            let base = if self.display.swapped {
-                &self.display.front
+            let base = if self.devices.display.swapped {
+                &self.devices.display.front
             } else {
-                &self.display.vram
+                &self.devices.display.vram
             };
             // Composite the hardware cursor over a copy of the frame. VRAM is
             // left untouched, so the guest never has to erase the old sprite.
-            let scanout: &[u32] = if self.display.cursor_visible {
+            let scanout: &[u32] = if self.devices.display.cursor_visible {
                 if self.host.cursor_frame.len() != base.len() {
                     self.host.cursor_frame.resize(base.len(), 0);
                 }
                 self.host.cursor_frame.copy_from_slice(base);
                 draw_cursor_sprite(
                     &mut self.host.cursor_frame,
-                    self.display.cursor_x as i32,
-                    self.display.cursor_y as i32,
+                    self.devices.display.cursor_x as i32,
+                    self.devices.display.cursor_y as i32,
                 );
                 &self.host.cursor_frame
             } else {
@@ -208,9 +208,12 @@ impl Machine {
         }
 
         if let Some((nx, ny, buttons)) = sampled {
-            if self.mouse.update_with_wheel(nx, ny, buttons, wheel_steps) {
-                self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
-                self.pending_irq = true;
+            if self
+                .devices
+                .mouse
+                .update_with_wheel(nx, ny, buttons, wheel_steps)
+            {
+                self.interrupts.raise_irq(crate::constants::IRQ_CAUSE_MOUSE);
             }
         }
     }

@@ -91,11 +91,7 @@ impl ShmPresenter {
             }
             let sym = |name: &[u8]| -> Option<*mut c_void> {
                 let p = libc::dlsym(libxext, name.as_ptr() as *const c_char);
-                if p.is_null() {
-                    None
-                } else {
-                    Some(p)
-                }
+                if p.is_null() { None } else { Some(p) }
             };
             let query: QueryFn = std::mem::transmute(sym(b"XShmQueryExtension\0")?);
             let create: CreateFn = std::mem::transmute(sym(b"XShmCreateImage\0")?);

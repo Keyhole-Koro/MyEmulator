@@ -1,17 +1,18 @@
 use crate::constants::IO_BASE;
 use crate::instruction::{
-    add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26, Opcode,
+    Opcode, add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26,
 };
 
-use super::cpu::CpuError;
-use super::mmu::MmuFault;
 use super::Machine;
+use super::cpu::CpuError;
+use super::memory_bus::CpuBus;
+use super::mmu::MmuFault;
 
 impl Machine {
     pub(super) fn execute_instruction(&mut self, raw_instruction: u32) -> Result<(), CpuError> {
         let inst = decode_instruction(raw_instruction);
 
-        if self.verbose {
+        if self.execution.verbose {
             println!(
                 "Raw: 0x{:08X} | OPC: 0x{:X} ({}) R1: 0x{:X} R2: 0x{:X} IMM: 0x{:X}",
                 inst.raw,
@@ -97,7 +98,7 @@ impl Machine {
             Opcode::Ld => {
                 let addr = self.get_register(inst.reg2)?;
                 self.profile_mem_read(addr);
-                let value = self.bus_load(addr)?;
+                let value = self.load_word(addr)?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
@@ -105,12 +106,12 @@ impl Machine {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)?;
                 self.profile_mem_write(addr);
-                self.bus_write(addr, value)?;
+                self.store_word(addr, value)?;
             }
             Opcode::Ldb => {
                 let addr = self.get_register(inst.reg2)?;
                 self.profile_mem_read(addr);
-                let value = self.bus_load_byte(addr)? as u32;
+                let value = self.load_byte(addr)? as u32;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
@@ -118,7 +119,7 @@ impl Machine {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)? as u8;
                 self.profile_mem_write(addr);
-                self.bus_write_byte(addr, value)?;
+                self.store_byte(addr, value)?;
             }
             Opcode::Add => {
                 let lhs = self.get_register(inst.reg1)?;
@@ -246,13 +247,13 @@ impl Machine {
                 self.update_zero_flag(value);
             }
             Opcode::In => {
-                let value = self.bus_load(IO_BASE.wrapping_add(inst.imm))?;
+                let value = self.load_word(IO_BASE.wrapping_add(inst.imm))?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
             Opcode::Out => {
                 let value = self.get_register(inst.reg1)?;
-                self.bus_write(IO_BASE.wrapping_add(inst.imm), value)?;
+                self.store_word(IO_BASE.wrapping_add(inst.imm), value)?;
             }
             Opcode::Ei => {
                 self.set_interrupt_enable(true);
@@ -261,7 +262,8 @@ impl Machine {
                 self.set_interrupt_enable(false);
             }
             Opcode::Syscall => {
-                self.pending_trap = Some(crate::constants::IRQ_CAUSE_SYSCALL);
+                self.interrupts
+                    .raise_trap(crate::constants::IRQ_CAUSE_SYSCALL);
             }
             Opcode::Iret => {
                 // Reverse of the interrupt entry push order (PC then SR).
@@ -270,14 +272,14 @@ impl Machine {
 
                 let returning_to_user = (sr & crate::constants::SR_USER) != 0;
                 if returning_to_user {
-                    std::mem::swap(&mut self.cpu.stack_pointer, &mut self.mmu.kernel_sp);
+                    std::mem::swap(&mut self.cpu.stack_pointer, &mut self.memory.mmu.kernel_sp);
                 }
 
                 // SR is architectural state; restore all mirrored execution
                 // fields together so its IE and condition bits cannot diverge.
                 self.restore_status_register(sr);
                 self.note_handler_return();
-                if let Some(stack) = self.irq_check.as_mut() {
+                if let Some(stack) = self.interrupts.irq_check.as_mut() {
                     // A context switch resumes a different frame; only compare
                     // when we are back on the frame that was interrupted.
                     if let Some(pos) = stack.iter().rposition(|s| s.sp == self.cpu.stack_pointer) {
@@ -313,7 +315,14 @@ impl Machine {
                             diffs.push(format!("flags {:?}->{:?}", snap.flags, flags));
                         }
                         if !diffs.is_empty() {
-                            eprintln!("[irq-check] cause={:#x} sp={:#x} pushed_sr={:#x} popped_sr={:#x}: {}", snap.cause, snap.sp, snap.sr, sr, diffs.join(", "));
+                            eprintln!(
+                                "[irq-check] cause={:#x} sp={:#x} pushed_sr={:#x} popped_sr={:#x}: {}",
+                                snap.cause,
+                                snap.sp,
+                                snap.sr,
+                                sr,
+                                diffs.join(", ")
+                            );
                         }
                     }
                 }

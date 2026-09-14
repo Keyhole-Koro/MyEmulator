@@ -423,9 +423,10 @@ mod tests {
         mmu.set_enabled(true);
 
         // Kernel mode access succeeds
-        assert!(mmu
-            .translate(&mut ram, 0x10000, AccessType::Read, false)
-            .is_ok());
+        assert!(
+            mmu.translate(&mut ram, 0x10000, AccessType::Read, false)
+                .is_ok()
+        );
 
         // User mode access triggers PrivilegeViolation
         assert_eq!(

@@ -226,8 +226,22 @@ mod tests {
         cb.set_key_state(Key::LeftShift, false);
         let events: Vec<KeyEvent> = q.borrow().iter().copied().collect();
         assert_eq!(events.len(), 5);
-        assert_eq!(events[1], KeyEvent { kind: KBD_EVT_DOWN, code: b'a' as u32, mods: KBD_MOD_SHIFT });
-        assert_eq!(events[2], KeyEvent { kind: KBD_EVT_CHAR, code: b'A' as u32, mods: KBD_MOD_SHIFT });
+        assert_eq!(
+            events[1],
+            KeyEvent {
+                kind: KBD_EVT_DOWN,
+                code: b'a' as u32,
+                mods: KBD_MOD_SHIFT
+            }
+        );
+        assert_eq!(
+            events[2],
+            KeyEvent {
+                kind: KBD_EVT_CHAR,
+                code: b'A' as u32,
+                mods: KBD_MOD_SHIFT
+            }
+        );
         assert_eq!(events[3].kind, KBD_EVT_UP);
         assert_eq!(events[4].mods, 0, "shift released clears the modifier");
     }
@@ -246,7 +260,11 @@ mod tests {
     fn overflow_keeps_newest() {
         let mut dev = KeyboardDevice::new();
         for i in 0..(KBD_EVENT_QUEUE_DEPTH as u32 + 3) {
-            dev.push(KeyEvent { kind: KBD_EVT_CHAR, code: i, mods: 0 });
+            dev.push(KeyEvent {
+                kind: KBD_EVT_CHAR,
+                code: i,
+                mods: 0,
+            });
         }
         assert_eq!(dev.event_count(), KBD_EVENT_QUEUE_DEPTH as u32);
         assert_eq!(dev.head().code, 3);

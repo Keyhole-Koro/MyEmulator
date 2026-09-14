@@ -11,13 +11,13 @@ impl Machine {
     // Thin forwarders the CPU load/store paths call. Cheap no-ops when profiling
     // is off, so they can sit unconditionally on the data-access path.
     pub(super) fn profile_mem_read(&mut self, address: u32) {
-        if let Some(profiler) = self.profiler.as_mut() {
+        if let Some(profiler) = self.execution.profiler.as_mut() {
             profiler.record_mem_read(address);
         }
     }
 
     pub(super) fn profile_mem_write(&mut self, address: u32) {
-        if let Some(profiler) = self.profiler.as_mut() {
+        if let Some(profiler) = self.execution.profiler.as_mut() {
             profiler.record_mem_write(address);
         }
     }

@@ -44,7 +44,7 @@ impl Machine {
             }
         };
         let inst = decode_instruction(instruction);
-        if self.verbose || options.trace {
+        if self.execution.verbose || options.trace {
             let line = format!(
                 "PC: 0x{:08X}, Instruction: 0x{:08X}, {} r1=0x{:X} r2=0x{:X} imm=0x{:X}",
                 pc,
@@ -54,12 +54,12 @@ impl Machine {
                 inst.reg2,
                 inst.imm
             );
-            if self.control_stdio {
+            if self.execution.control_stdio {
                 eprintln!("{line}");
             } else {
                 println!("{line}");
             }
-            if let Some(log) = self.trace_log.as_mut() {
+            if let Some(log) = self.execution.trace_log.as_mut() {
                 writeln!(log, "{line}").map_err(|e| e.to_string())?;
             }
         }
@@ -74,7 +74,7 @@ impl Machine {
             Err(super::cpu::CpuError::Host(message)) => return Err(self.describe_error(message)),
         }
         self.cpu.instrs_retired = self.cpu.instrs_retired.wrapping_add(1);
-        if let Some(profiler) = self.profiler.as_mut() {
+        if let Some(profiler) = self.execution.profiler.as_mut() {
             profiler.record_instruction(pc, inst.opcode);
             if inst.opcode == 0x1b {
                 profiler.record_call(self.cpu.program_counter, self.cpu.link_register);
@@ -86,21 +86,15 @@ impl Machine {
     }
 
     fn note_pc(&mut self) {
-        if let Some((ring, idx)) = self.pc_ring.as_mut() {
-            ring[*idx] = self.cpu.program_counter;
-            *idx = (*idx + 1) % ring.len();
-        }
+        self.execution.note_pc(self.cpu.program_counter);
     }
 
     // Append the recent-PC ring (when enabled) to a machine error message.
     pub fn describe_error(&self, e: String) -> String {
-        let Some((ring, idx)) = self.pc_ring.as_ref() else {
+        let Some(ring) = self.execution.recent_pcs() else {
             return e;
         };
-        let mut pcs = Vec::new();
-        for i in 0..ring.len() {
-            pcs.push(format!("{:x}", ring[(idx + i) % ring.len()]));
-        }
+        let pcs: Vec<_> = ring.into_iter().map(|pc| format!("{pc:x}")).collect();
         format!("{} | recent pcs: {}", e, pcs.join(" "))
     }
 
@@ -144,7 +138,7 @@ impl Machine {
             }
             // Persistent cadence: repeated small automation budgets must not
             // indefinitely postpone servicing a pending device operation.
-            if self.service_ticks == 0 || self.cpu.waiting_for_interrupt {
+            if self.execution.service_ticks == 0 || self.cpu.waiting_for_interrupt {
                 if deadline.is_some_and(|end| Instant::now() >= end) {
                     break;
                 }
@@ -159,7 +153,7 @@ impl Machine {
                     break;
                 }
             }
-            self.service_ticks = (self.service_ticks + 1) % 1000;
+            self.execution.service_ticks = (self.execution.service_ticks + 1) % 1000;
             match self.step(options)? {
                 StepOutcome::Idle => {
                     if options.step_count.is_some() {
@@ -168,7 +162,11 @@ impl Machine {
                         break;
                     }
                     let cap = Duration::from_millis(4);
-                    let mut wait = self.timer.time_until_next().map_or(cap, |t| t.min(cap));
+                    let mut wait = self
+                        .devices
+                        .timer
+                        .time_until_next()
+                        .map_or(cap, |t| t.min(cap));
                     if let Some(end) = deadline {
                         wait = wait.min(end.saturating_duration_since(Instant::now()));
                     }

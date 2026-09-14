@@ -201,10 +201,10 @@ impl Machine {
     // The buffer the display is showing: front if the guest has swapped at
     // least once, else the back buffer (mirrors maybe_refresh_display).
     fn scanout_pixels(&self) -> &[u32] {
-        if self.display.swapped {
-            &self.display.front
+        if self.devices.display.swapped {
+            &self.devices.display.front
         } else {
-            &self.display.vram
+            &self.devices.display.vram
         }
     }
 
@@ -272,12 +272,12 @@ impl Machine {
     }
 
     pub fn swap_count(&self) -> u64 {
-        self.display.swap_count
+        self.devices.display.swap_count
     }
 
     pub fn set_trace_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path_ref = path.as_ref();
-        self.trace_log = Some(
+        self.execution.trace_log = Some(
             File::create(path_ref)
                 .map_err(|e| format!("Unable to open trace log {}: {}", path_ref.display(), e))?,
         );

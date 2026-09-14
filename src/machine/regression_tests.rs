@@ -6,14 +6,14 @@ fn paged_machine() -> Machine {
     let mut m = Machine::new(false, true);
     m.set_timer_interval(0);
     m.bus_write_physical(0x1000, 0x2000 | PTE_VALID | PTE_USER | PTE_WRITABLE);
-    m.mmu.set_pdbr(0x1000);
-    m.mmu.set_enabled(true);
+    m.memory.mmu.set_pdbr(0x1000);
+    m.memory.mmu.set_enabled(true);
     m
 }
 
 fn map(m: &mut Machine, va: u32, pa: u32, flags: u32) {
     m.bus_write_physical(0x2000 + ((va >> 12) & 0x3ff) * 4, pa | flags);
-    m.mmu.flush_tlb();
+    m.memory.mmu.flush_tlb();
 }
 
 #[test]
@@ -35,17 +35,22 @@ fn warm_tlb_must_enforce_directory_user_permission() {
     let mut m = paged_machine();
     m.bus_write_physical(0x1000, 0x2000 | PTE_VALID); // kernel-only directory
     map(&mut m, 0x4000, 0x8000, PTE_VALID | PTE_USER | PTE_WRITABLE);
-    assert!(m
-        .mmu
-        .translate(m.ram.as_mut_slice(), 0x4000, AccessType::Read, true)
-        .is_err());
-    assert!(m
-        .mmu
-        .translate(m.ram.as_mut_slice(), 0x4000, AccessType::Read, false)
-        .is_ok());
     assert!(
-        m.mmu
-            .translate(m.ram.as_mut_slice(), 0x4000, AccessType::Read, true)
+        m.memory
+            .mmu
+            .translate(m.memory.ram.as_mut_slice(), 0x4000, AccessType::Read, true)
+            .is_err()
+    );
+    assert!(
+        m.memory
+            .mmu
+            .translate(m.memory.ram.as_mut_slice(), 0x4000, AccessType::Read, false)
+            .is_ok()
+    );
+    assert!(
+        m.memory
+            .mmu
+            .translate(m.memory.ram.as_mut_slice(), 0x4000, AccessType::Read, true)
             .is_err(),
         "kernel TLB fill bypassed the PDE's user restriction"
     );
@@ -74,7 +79,7 @@ fn faulting_load_must_preserve_destination_register() {
     m.cpu.registers[0] = 0x1234;
     m.cpu.registers[1] = 0x4000; // unmapped
     m.run_frame_budget(1).unwrap();
-    assert_eq!(m.pending_trap, Some(IRQ_CAUSE_PAGE_FAULT));
+    assert_eq!(m.interrupts.pending_trap, Some(IRQ_CAUSE_PAGE_FAULT));
     assert_eq!(
         m.cpu.registers[0], 0x1234,
         "faulting LD overwrote r0 with zero"
@@ -169,7 +174,7 @@ fn every_sr_destination_is_checked_before_operand_side_effects() {
         ));
         assert_eq!(m.status_register(), sr, "opcode {opcode:x}");
         assert_eq!(m.cpu.stack_pointer, sp);
-        assert_eq!(m.serial.peek_rx(), u32::from(b'x'));
+        assert_eq!(m.devices.serial.peek_rx(), u32::from(b'x'));
     }
 }
 
@@ -190,7 +195,7 @@ fn data_fault_can_be_repaired_and_the_instruction_retried() {
     );
     assert_eq!(m.cpu.instrs_retired, 0);
     m.try_dispatch_irq().unwrap();
-    assert_eq!(m.mmu.fault_addr, 0x4000);
+    assert_eq!(m.memory.mmu.fault_addr, 0x4000);
     map(&mut m, 0x4000, 0x8000, PTE_VALID);
     m.bus_write_physical(0x8000, 0xaabb_ccdd);
     m.bus_write_physical(IRQ_CAUSE_ADDR, IRQ_CAUSE_PAGE_FAULT);
@@ -207,7 +212,7 @@ fn syscall_saves_next_pc_and_trap_cause_is_not_a_retrigger() {
     let mut m = Machine::new(false, true);
     m.set_timer_interval(0);
     m.cpu.stack_pointer = 0x7000;
-    m.mmu.kernel_sp = 0x8000;
+    m.memory.mmu.kernel_sp = 0x8000;
     m.restore_status_register(SR_USER); // IE=0 must not mask a syscall
     m.bus_write_physical(IRQ_VECTOR_ADDR, 0x100);
     m.bus_write_physical(0, 0x3e << 26);
@@ -217,8 +222,8 @@ fn syscall_saves_next_pc_and_trap_cause_is_not_a_retrigger() {
     assert_eq!(m.bus_read_physical(0x7ffc), 4);
     assert_eq!(m.bus_read_physical(0x7ff8), SR_USER);
     assert!(!m.is_user_mode());
-    m.pending_irq = true; // an unrelated asynchronous event during handler
-    m.irq_cause |= IRQ_CAUSE_SERIAL;
+    m.interrupts.pending_irq = true; // an unrelated asynchronous event during handler
+    m.interrupts.cause |= IRQ_CAUSE_SERIAL;
     m.try_dispatch_irq().unwrap();
     assert_eq!(
         m.cpu.stack_pointer, 0x7ff8,
@@ -228,7 +233,7 @@ fn syscall_saves_next_pc_and_trap_cause_is_not_a_retrigger() {
     assert!(m.is_user_mode());
     assert_eq!(m.cpu.program_counter, 4);
     assert_eq!(m.cpu.stack_pointer, 0x7000);
-    assert_eq!(m.mmu.kernel_sp, 0x8000);
+    assert_eq!(m.memory.mmu.kernel_sp, 0x8000);
 }
 
 #[test]
@@ -278,16 +283,16 @@ fn interrupt_entry_preflights_the_entire_frame() {
     map(&mut m, 0x5000, 0x9000, PTE_VALID | PTE_WRITABLE);
     m.bus_write_physical(0x9000, 0xaabb_ccdd);
     m.cpu.stack_pointer = 0x7770;
-    m.mmu.kernel_sp = 0x5004; // PC word mapped; SR word unmapped
+    m.memory.mmu.kernel_sp = 0x5004; // PC word mapped; SR word unmapped
     m.restore_status_register(SR_USER | SR_IE);
     m.bus_write_physical(IRQ_VECTOR_ADDR, 0x100);
     m.ingest_serial_bytes(b"x");
     assert!(m.try_dispatch_irq().is_err());
     assert_eq!(m.bus_read_physical(0x9000), 0xaabb_ccdd);
     assert_eq!(m.cpu.stack_pointer, 0x7770);
-    assert_eq!(m.mmu.kernel_sp, 0x5004);
+    assert_eq!(m.memory.mmu.kernel_sp, 0x5004);
     assert_eq!(m.status_register(), SR_USER | SR_IE);
-    assert!(m.pending_irq);
+    assert!(m.interrupts.pending_irq);
 }
 
 #[test]
@@ -341,6 +346,6 @@ fn geometry_registers_are_read_only_and_match_the_framebuffer() {
     assert_eq!(
         m.bus_load(DISPLAY_WIDTH_ADDR).unwrap() as usize
             * m.bus_load(DISPLAY_HEIGHT_ADDR).unwrap() as usize,
-        m.display.vram.len()
+        m.devices.display.vram.len()
     );
 }

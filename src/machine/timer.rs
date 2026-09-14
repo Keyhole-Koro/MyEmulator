@@ -104,7 +104,7 @@ impl TimerDevice {
 
 #[cfg(test)]
 mod tests {
-    use super::{TimerDevice, MIN_INSTRS_PER_TICK};
+    use super::{MIN_INSTRS_PER_TICK, TimerDevice};
     use std::time::Duration;
 
     // Enough retired instructions that the floor never gets in the way; each

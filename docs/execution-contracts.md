@@ -2,11 +2,23 @@
 
 ## Ownership
 
-`Machine` connects the CPU, address translation and devices. `cpu::Cpu` owns
-registers and execution state; `ram::Ram` owns physical RAM; `DisplayDevice`
-owns guest-visible framebuffers and cursor state. `HostDisplay` owns the window,
-host input queue and presentation timing. Host display work runs at service
-points, never as a side effect of `DISPLAY_SWAP`.
+`Machine` is a facade that connects five independently named state domains:
+`cpu::Cpu` (architectural registers/execution state), `GuestMemory` (RAM, ROM,
+MMIO backing registers and MMU), `Devices` (guest-visible display, serial,
+keyboard, mouse, timer and SSD), `InterruptController` (causes, pending work
+and IRQ diagnostics), and `ExecutionState` (host-only tracing, profiling and
+service cadence). `DisplayDevice` owns guest-visible framebuffers and cursor
+state; `HostDisplay` owns the window, host input queue and presentation timing.
+Host display work runs at service points, never as a side effect of
+`DISPLAY_SWAP`.
+
+The memory bus is the only address-decoding boundary. `CpuBus` is the narrow
+CPU-facing contract for word/byte loads and stores; it translates virtual
+addresses then validates complete accesses before mutation. Physical methods
+dispatch RAM/ROM/VRAM/MMIO. Device polling raises causes via
+`InterruptController`, and W1C acknowledgement is also performed there. This
+keeps device state, address policy and interrupt latching from being implicit
+properties of one catch-all `Machine` struct.
 
 Both normal execution and control-stdio use `run_loop()` and `step()`. A step
 delivers a pending interrupt/trap, checks the actual execution PC for a

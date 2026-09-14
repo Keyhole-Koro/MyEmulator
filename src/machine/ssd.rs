@@ -236,13 +236,12 @@ impl SsdDevice {
 
 impl Machine {
     pub(super) fn service_ssd_dma(&mut self, cmd: u32) {
-        self.ssd.begin_command(cmd);
+        self.devices.ssd.begin_command(cmd);
     }
 
     pub(super) fn service_ssd(&mut self) {
-        if self.ssd.service(&mut self.ram) {
-            self.irq_cause |= IRQ_CAUSE_SSD;
-            self.pending_irq = true;
+        if self.devices.ssd.service(&mut self.memory.ram) {
+            self.interrupts.raise_irq(IRQ_CAUSE_SSD);
         }
     }
 }
@@ -282,19 +281,22 @@ mod tests {
             SSD_STATUS_BUSY,
             "busy until the device is polled"
         );
-        assert!(!m.pending_irq, "no IRQ before the transfer completes");
+        assert!(
+            !m.interrupts.pending_irq,
+            "no IRQ before the transfer completes"
+        );
         m.poll_devices();
         assert_eq!(m.bus_read_physical(SSD_STATUS_ADDR), SSD_STATUS_DONE);
         assert_ne!(
-            m.irq_cause & IRQ_CAUSE_SSD,
+            m.interrupts.cause & IRQ_CAUSE_SSD,
             0,
             "completion raises the SSD cause"
         );
-        assert!(m.pending_irq);
+        assert!(m.interrupts.pending_irq);
 
         // Read it back into a different RAM buffer.
-        m.irq_cause = 0;
-        m.pending_irq = false;
+        m.interrupts.cause = 0;
+        m.interrupts.pending_irq = false;
         m.bus_write_physical(SSD_BLOCK_ADDR, 3);
         m.bus_write_physical(SSD_ADDR_ADDR, 0x2000);
         m.bus_write_physical(SSD_CMD_ADDR, SSD_CMD_READ);
@@ -316,7 +318,10 @@ mod tests {
         m.bus_write_physical(SSD_CMD_ADDR, 0x99);
         assert_eq!(m.bus_read_physical(SSD_STATUS_ADDR), SSD_STATUS_ERROR);
         m.poll_devices();
-        assert!(!m.pending_irq, "nothing was latched, so nothing completes");
+        assert!(
+            !m.interrupts.pending_irq,
+            "nothing was latched, so nothing completes"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -336,12 +341,12 @@ mod tests {
                 m.bus_write_physical(SSD_ADDR_ADDR, addr);
                 m.bus_write_physical(SSD_CMD_ADDR, cmd);
                 m.service_ssd();
-                assert_eq!(m.ssd.status(), SSD_STATUS_ERROR);
+                assert_eq!(m.devices.ssd.status(), SSD_STATUS_ERROR);
                 assert_eq!(m.bus_read_physical(0), 0xaabb_ccdd);
                 assert_eq!(m.bus_read_physical(RAM_END_EXCLUSIVE - 4), 0x1122_3344);
-                assert_eq!(m.display.vram[0], 0);
-                assert_eq!(m.irq_cause, IRQ_CAUSE_SSD);
-                assert_eq!(m.ssd.read_block(0).unwrap()[..4], [0; 4]);
+                assert_eq!(m.devices.display.vram[0], 0);
+                assert_eq!(m.interrupts.cause, IRQ_CAUSE_SSD);
+                assert_eq!(m.devices.ssd.read_block(0).unwrap()[..4], [0; 4]);
             }
         }
         std::fs::remove_file(path).unwrap();
@@ -359,14 +364,14 @@ mod tests {
         m.bus_write_physical(SSD_ADDR_ADDR, 0x2000);
         m.bus_write_physical(SSD_CMD_ADDR, SSD_CMD_READ);
         m.bus_write_physical(SSD_CMD_ADDR, 0xff);
-        assert_eq!(m.ssd.status(), SSD_STATUS_BUSY);
+        assert_eq!(m.devices.ssd.status(), SSD_STATUS_BUSY);
         m.service_ssd();
-        assert_eq!(m.ssd.status(), SSD_STATUS_DONE);
+        assert_eq!(m.devices.ssd.status(), SSD_STATUS_DONE);
         assert_eq!(
-            m.ssd.read_block(1).unwrap()[..4],
+            m.devices.ssd.read_block(1).unwrap()[..4],
             0xaabb_ccddu32.to_be_bytes()
         );
-        assert_eq!(m.ssd.read_block(2).unwrap()[..4], [0; 4]);
+        assert_eq!(m.devices.ssd.read_block(2).unwrap()[..4], [0; 4]);
         assert_eq!(m.bus_read_physical(0x2000), 0x1122_3344);
         std::fs::remove_file(path).unwrap();
     }
@@ -385,7 +390,7 @@ mod tests {
         for _ in 0..1000 {
             m.run_frame_budget(1).unwrap();
         }
-        assert_eq!(m.ssd.status(), SSD_STATUS_DONE);
+        assert_eq!(m.devices.ssd.status(), SSD_STATUS_DONE);
         std::fs::remove_file(path).unwrap();
     }
 }

@@ -2,7 +2,7 @@ use std::io::Read;
 use std::sync::mpsc;
 use std::thread;
 
-use crate::constants::{is_ram_address, IRQ_CAUSE_SERIAL, IRQ_CAUSE_TIMER, IRQ_VECTOR_ADDR, SR_IE};
+use crate::constants::{IRQ_CAUSE_SERIAL, IRQ_CAUSE_TIMER, IRQ_VECTOR_ADDR, SR_IE, is_ram_address};
 
 use super::Machine;
 
@@ -10,7 +10,7 @@ impl Machine {
     // Spawn a background thread that forwards stdin bytes to the RX queue.
     // Idempotent; safe to call before each run.
     pub(super) fn start_serial_input(&mut self) {
-        if self.serial.has_rx_recv() {
+        if self.devices.serial.has_rx_recv() {
             return;
         }
         let (tx, rx) = mpsc::channel::<u8>();
@@ -29,7 +29,7 @@ impl Machine {
                 }
             }
         });
-        self.serial.set_rx_recv(rx);
+        self.devices.serial.set_rx_recv(rx);
     }
 
     // Queue received bytes and raise an IRQ so the kernel's handler runs
@@ -42,16 +42,14 @@ impl Machine {
         if bytes.is_empty() {
             return;
         }
-        self.serial.ingest_bytes(bytes);
-        self.irq_cause |= IRQ_CAUSE_SERIAL;
-        self.pending_irq = true;
+        self.devices.serial.ingest_bytes(bytes);
+        self.interrupts.raise_irq(IRQ_CAUSE_SERIAL);
     }
 
     // Drain any bytes the input thread has delivered into the RX queue.
     fn poll_serial_input(&mut self) {
-        if self.serial.service_input() {
-            self.irq_cause |= IRQ_CAUSE_SERIAL;
-            self.pending_irq = true;
+        if self.devices.serial.service_input() {
+            self.interrupts.raise_irq(IRQ_CAUSE_SERIAL);
         }
     }
 
@@ -64,9 +62,8 @@ impl Machine {
     }
 
     pub fn set_mouse_state_wheel(&mut self, x: u32, y: u32, buttons: u32, wheel: i32) {
-        if self.mouse.update_with_wheel(x, y, buttons, wheel) {
-            self.irq_cause |= crate::constants::IRQ_CAUSE_MOUSE;
-            self.pending_irq = true;
+        if self.devices.mouse.update_with_wheel(x, y, buttons, wheel) {
+            self.interrupts.raise_irq(crate::constants::IRQ_CAUSE_MOUSE);
         }
     }
 
@@ -74,11 +71,12 @@ impl Machine {
     // host keystrokes through here; control_stdio.rs injects key.* commands.
     pub fn push_key_event(&mut self, kind: u32, code: u32, mods: u32) {
         if self
+            .devices
             .keyboard
             .push(super::keyboard::KeyEvent { kind, code, mods })
         {
-            self.irq_cause |= crate::constants::IRQ_CAUSE_KEYBOARD;
-            self.pending_irq = true;
+            self.interrupts
+                .raise_irq(crate::constants::IRQ_CAUSE_KEYBOARD);
         }
     }
 
@@ -87,16 +85,17 @@ impl Machine {
     // than the tick period, the guest can never make forward progress between
     // interrupts (total starvation), so warn once.
     pub(super) fn note_handler_return(&mut self) {
-        let Some(entered) = self.timer_handler_entered.take() else {
+        let Some(entered) = self.interrupts.timer_handler_entered.take() else {
             return;
         };
-        let Some(period) = self.timer.period() else {
+        let Some(period) = self.devices.timer.period() else {
             return;
         };
         if entered.elapsed() >= period {
-            self.slow_timer_handler_streak += 1;
-            if self.slow_timer_handler_streak >= 16 && !self.starvation_warned {
-                self.starvation_warned = true;
+            self.interrupts.slow_timer_handler_streak += 1;
+            if self.interrupts.slow_timer_handler_streak >= 16 && !self.interrupts.starvation_warned
+            {
+                self.interrupts.starvation_warned = true;
                 eprintln!(
                     "[myemu] warning: timer IRQ handler exceeded the {}us tick period \
                      16 times in a row; the guest CPU is likely starving \
@@ -105,7 +104,7 @@ impl Machine {
                 );
             }
         } else {
-            self.slow_timer_handler_streak = 0;
+            self.interrupts.slow_timer_handler_streak = 0;
         }
     }
 
@@ -128,11 +127,11 @@ impl Machine {
         self.poll_serial_input();
 
         if self
+            .devices
             .timer
             .service(self.cpu.instrs_retired, self.cpu.waiting_for_interrupt)
         {
-            self.irq_cause |= IRQ_CAUSE_TIMER;
-            self.pending_irq = true;
+            self.interrupts.raise_irq(IRQ_CAUSE_TIMER);
         }
 
         self.service_ssd();
@@ -145,8 +144,8 @@ impl Machine {
     // instruction) costs nothing measurable.
     #[inline]
     pub(super) fn try_dispatch_irq(&mut self) -> Result<(), String> {
-        let trap = self.pending_trap;
-        if trap.is_none() && !(self.cpu.interrupt_enable && self.pending_irq) {
+        let trap = self.interrupts.pending_trap;
+        if trap.is_none() && !(self.cpu.interrupt_enable && self.interrupts.pending_irq) {
             return Ok(());
         }
         let vector = self.bus_read_physical(IRQ_VECTOR_ADDR);
@@ -161,7 +160,7 @@ impl Machine {
         let was_user = self.is_user_mode();
         let sr = self.status_register();
         let frame_top = if was_user {
-            self.mmu.kernel_sp
+            self.memory.mmu.kernel_sp
         } else {
             self.cpu.stack_pointer
         };
@@ -181,9 +180,9 @@ impl Machine {
         let (pc_addr, sr_addr) = prepared.map_err(|e| format!("Cannot enter interrupt: {e}"))?;
 
         if let Some(cause) = trap {
-            self.irq_cause |= cause;
+            self.interrupts.cause |= cause;
         }
-        if let Some(stack) = self.irq_check.as_mut() {
+        if let Some(stack) = self.interrupts.irq_check.as_mut() {
             stack.push(super::IrqSnapshot {
                 sp: self.cpu.stack_pointer,
                 pc: self.cpu.program_counter,
@@ -197,22 +196,22 @@ impl Machine {
                     self.cpu.overflow_flag,
                 ),
                 sr,
-                cause: self.irq_cause,
+                cause: self.interrupts.cause,
             });
         }
         self.write_prepared_word(pc_addr, self.cpu.program_counter);
         self.write_prepared_word(sr_addr, sr);
         if was_user {
-            self.mmu.kernel_sp = self.cpu.stack_pointer;
+            self.memory.mmu.kernel_sp = self.cpu.stack_pointer;
         }
         self.cpu.stack_pointer = frame_sp;
         self.restore_status_register(sr & !crate::constants::SR_USER & !SR_IE);
-        self.pending_trap = None;
-        self.pending_irq = false;
+        self.interrupts.pending_trap = None;
+        self.interrupts.pending_irq = false;
         self.cpu.waiting_for_interrupt = false;
         self.cpu.program_counter = vector;
-        if self.irq_cause & IRQ_CAUSE_TIMER != 0 {
-            self.timer_handler_entered = Some(std::time::Instant::now());
+        if self.interrupts.cause & IRQ_CAUSE_TIMER != 0 {
+            self.interrupts.timer_handler_entered = Some(std::time::Instant::now());
         }
         Ok(())
     }
@@ -259,9 +258,9 @@ mod tests {
     #[test]
     fn received_input_raises_pending_irq() {
         let mut m = Machine::new(false, true);
-        assert!(!m.pending_irq);
+        assert!(!m.interrupts.pending_irq);
         m.ingest_serial_bytes(b"x");
-        assert!(m.pending_irq);
+        assert!(m.interrupts.pending_irq);
     }
 
     #[test]
@@ -332,7 +331,7 @@ mod tests {
 
     #[test]
     fn mouse_registers_reflect_state() {
-        use crate::constants::{MOUSE_BUTTONS_ADDR, MOUSE_BUTTON_LEFT, MOUSE_X_ADDR, MOUSE_Y_ADDR};
+        use crate::constants::{MOUSE_BUTTON_LEFT, MOUSE_BUTTONS_ADDR, MOUSE_X_ADDR, MOUSE_Y_ADDR};
         let mut m = Machine::new(false, true);
         m.set_mouse_state(320, 240, MOUSE_BUTTON_LEFT);
         assert_eq!(m.bus_read_physical(MOUSE_X_ADDR), 320);
@@ -343,14 +342,14 @@ mod tests {
     #[test]
     fn mouse_change_raises_irq() {
         let mut m = Machine::new(false, true);
-        assert!(!m.pending_irq);
+        assert!(!m.interrupts.pending_irq);
         m.set_mouse_state(10, 20, 0);
-        assert!(m.pending_irq, "a mouse move raises an IRQ");
-        m.pending_irq = false;
+        assert!(m.interrupts.pending_irq, "a mouse move raises an IRQ");
+        m.interrupts.pending_irq = false;
         m.set_mouse_state(10, 20, 0);
-        assert!(!m.pending_irq, "no change means no new IRQ");
+        assert!(!m.interrupts.pending_irq, "no change means no new IRQ");
         m.set_mouse_state(10, 20, crate::constants::MOUSE_BUTTON_LEFT);
-        assert!(m.pending_irq, "a button press raises an IRQ");
+        assert!(m.interrupts.pending_irq, "a button press raises an IRQ");
     }
 
     #[test]
@@ -359,21 +358,21 @@ mod tests {
         let mut m = Machine::new(false, true);
         // Draw into the back buffer.
         m.bus_write_physical(VRAM_BASE, 0x00AA_BBCC);
-        assert!(!m.display.swapped, "no swap yet");
-        assert_eq!(m.display.front[0], 0, "front untouched before swap");
+        assert!(!m.devices.display.swapped, "no swap yet");
+        assert_eq!(m.devices.display.front[0], 0, "front untouched before swap");
 
         // Present: back -> front.
         m.bus_write_physical(DISPLAY_SWAP_ADDR, 1);
-        assert!(m.display.swapped, "swap latched");
+        assert!(m.devices.display.swapped, "swap latched");
         assert_eq!(
-            m.display.front[0], 0x00AA_BBCC,
+            m.devices.display.front[0], 0x00AA_BBCC,
             "front now holds the drawn pixel"
         );
 
         // Further drawing lands in back only, not shown until the next swap.
         m.bus_write_physical(VRAM_BASE, 0x0011_2233);
         assert_eq!(
-            m.display.front[0], 0x00AA_BBCC,
+            m.devices.display.front[0], 0x00AA_BBCC,
             "front unchanged until next swap"
         );
         assert_eq!(
@@ -392,8 +391,8 @@ mod tests {
         // ... but the ALU has since cleared the live flag.
         m.cpu.zero_flag = false;
         m.bus_write_physical(IRQ_VECTOR_ADDR, 0x1000);
-        m.irq_cause = crate::constants::IRQ_CAUSE_TIMER;
-        m.pending_irq = true;
+        m.interrupts.cause = crate::constants::IRQ_CAUSE_TIMER;
+        m.interrupts.pending_irq = true;
         m.try_dispatch_irq().unwrap();
         let pushed_sr = m.bus_read_physical(m.cpu.stack_pointer);
         assert_eq!(pushed_sr & SR_ZERO, 0, "stale ZERO bit must not be pushed");

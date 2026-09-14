@@ -43,7 +43,12 @@ fn adler32(data: &[u8]) -> u32 {
     (b << 16) | a
 }
 
-fn write_chunk<W: Write>(out: &mut W, table: &[u32; 256], kind: &[u8; 4], body: &[u8]) -> std::io::Result<()> {
+fn write_chunk<W: Write>(
+    out: &mut W,
+    table: &[u32; 256],
+    kind: &[u8; 4],
+    body: &[u8],
+) -> std::io::Result<()> {
     out.write_all(&(body.len() as u32).to_be_bytes())?;
     let mut crc_input = Vec::with_capacity(4 + body.len());
     crc_input.extend_from_slice(kind);
@@ -73,7 +78,12 @@ fn zlib_stored(raw: &[u8]) -> Vec<u8> {
 }
 
 // Encode `pixels` (0x00RRGGBB, row-major, `width` per row) as a PNG.
-pub fn write_png<W: Write>(out: &mut W, pixels: &[u32], width: usize, height: usize) -> std::io::Result<()> {
+pub fn write_png<W: Write>(
+    out: &mut W,
+    pixels: &[u32],
+    width: usize,
+    height: usize,
+) -> std::io::Result<()> {
     let table = crc32_table();
     out.write_all(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])?;
 
