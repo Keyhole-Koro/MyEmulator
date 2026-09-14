@@ -19,7 +19,8 @@ pub enum MmuFault {
 struct TlbEntry {
     vpn: u32,
     pfn: u32,
-    flags: u32,
+    flags: u32, // raw leaf PTE, kept separate from effective permissions
+    user_accessible: bool,
     // The hardware updates A/D bits in the page-table entry even after the
     // translation itself is cached in the TLB.
     pte_addr: usize,
@@ -96,12 +97,20 @@ impl Mmu {
     }
 
     #[inline]
-    fn tlb_insert(&mut self, vpn: u32, pfn: u32, flags: u32, pte_addr: usize) {
+    fn tlb_insert(
+        &mut self,
+        vpn: u32,
+        pfn: u32,
+        flags: u32,
+        pte_addr: usize,
+        user_accessible: bool,
+    ) {
         let idx = (vpn as usize) % TLB_SIZE;
         self.tlb[idx] = TlbEntry {
             vpn,
             pfn,
             flags,
+            user_accessible,
             pte_addr,
             valid: true,
         };
@@ -125,7 +134,7 @@ impl Mmu {
         if let Some(entry) = self.tlb_lookup(vpn).copied() {
             let flags = entry.flags;
             // Check User permission
-            if is_user && (flags & PTE_USER == 0) {
+            if is_user && !entry.user_accessible {
                 let fault = MmuFault::PrivilegeViolation { vaddr };
                 self.record_fault(fault);
                 return Err(fault);
@@ -267,7 +276,8 @@ impl Mmu {
         ram[pte_addr..pte_addr + 4].copy_from_slice(&pte_bytes);
 
         let pfn = pte & 0xFFFF_F000;
-        self.tlb_insert(vpn, pfn, pte, pte_addr);
+        // PDE U gates the subtree; W/X are leaf-only in this architecture.
+        self.tlb_insert(vpn, pfn, pte, pte_addr, (pde & pte & PTE_USER) != 0);
 
         Ok(pfn | offset)
     }

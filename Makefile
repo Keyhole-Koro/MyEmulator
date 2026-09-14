@@ -10,14 +10,14 @@ MEM_ADDR ?=
 MEM_LEN ?=
 
 RUST_SOURCES := $(shell find src -name '*.rs')
-DISPLAY_CONFIG := ../../system/MyOS/src/ui/display_config.mln
+DISPLAY_CONFIG := config/hardware.conf
 
 .PHONY: all run-myemu debug-myemu trace-myemu break-myemu step-myemu mem-myemu \
 	gdb test test-component test-all clean
 
 all: $(TARGET)
 
-$(TARGET): Cargo.toml build.rs $(DISPLAY_CONFIG) $(RUST_SOURCES)
+$(TARGET): Cargo.toml Cargo.lock build.rs $(DISPLAY_CONFIG) $(RUST_SOURCES)
 	$(CARGO) build --release
 
 run-myemu: $(TARGET)

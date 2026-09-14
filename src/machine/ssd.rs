@@ -9,9 +9,8 @@ use crate::constants::{
 
 use super::Machine;
 
-// What the memory bus must do to service a command, decided by the device. The
-// bus performs the RAM half of the transfer (scatter/gather) since only it can
-// reach RAM; the device performs the disk half and owns the status register.
+// Immutable command operands captured at CMD write, including physical address.
+#[derive(Clone, Copy)]
 enum SsdOp {
     // Read `block` from disk; the returned bytes go to RAM at `buf_addr`.
     Read { block: u32, buf_addr: u32 },
@@ -39,7 +38,7 @@ pub struct SsdDevice {
     status: u32,
     // Command latched by a CMD-register write, still awaiting completion.
     // Some(cmd) exactly while status == BUSY.
-    pending_cmd: Option<u32>,
+    pending_cmd: Option<SsdOp>,
 }
 
 impl SsdDevice {
@@ -68,6 +67,9 @@ impl SsdDevice {
             .open(&path)
             .map_err(|e| format!("failed to open disk image {}: {}", path.display(), e))?;
 
+        if file.metadata().map_err(|e| e.to_string())?.len() > SSD_DISK_SIZE as u64 {
+            return Err("disk image exceeds device capacity".to_string());
+        }
         file.set_len(SSD_DISK_SIZE as u64)
             .map_err(|e| format!("failed to size disk image: {}", e))?;
 
@@ -108,10 +110,24 @@ impl SsdDevice {
             self.status = SSD_STATUS_ERROR;
             return;
         }
+        // A busy device keeps its original command and BUSY status.
+        if self.pending_cmd.is_some() {
+            return;
+        }
         match cmd {
             SSD_CMD_READ | SSD_CMD_WRITE => {
                 self.status = SSD_STATUS_BUSY;
-                self.pending_cmd = Some(cmd);
+                self.pending_cmd = Some(if cmd == SSD_CMD_READ {
+                    SsdOp::Read {
+                        block: self.block,
+                        buf_addr: self.buf_addr,
+                    }
+                } else {
+                    SsdOp::Write {
+                        block: self.block,
+                        buf_addr: self.buf_addr,
+                    }
+                });
             }
             _ => {
                 self.status = SSD_STATUS_ERROR;
@@ -119,25 +135,12 @@ impl SsdDevice {
         }
     }
 
-    // Take the in-flight command, if any, resolved against the latched
-    // block/buffer registers, for the machine to complete.
+    // Take the captured command; later register writes cannot change it.
     fn take_pending(&mut self) -> Option<SsdOp> {
-        match self.pending_cmd.take()? {
-            SSD_CMD_READ => Some(SsdOp::Read {
-                block: self.block,
-                buf_addr: self.buf_addr,
-            }),
-            SSD_CMD_WRITE => Some(SsdOp::Write {
-                block: self.block,
-                buf_addr: self.buf_addr,
-            }),
-            _ => None,
-        }
+        self.pending_cmd.take()
     }
 
-    // Complete a read: the bus supplies the block it wants and the device fills
-    // the buffer, returning the bytes for the bus to scatter into RAM. Sets the
-    // status register from the outcome.
+    // Complete the disk half of a read into an owned DMA buffer.
     fn finish_read(&mut self, block: u32) -> Option<[u8; SSD_BLOCK_SIZE]> {
         match self.read_block(block) {
             Some(data) => {
@@ -151,8 +154,7 @@ impl SsdDevice {
         }
     }
 
-    // Complete a write: the bus has gathered the block bytes from RAM and hands
-    // them here to be written to disk. Sets the status register from the outcome.
+    // Complete a write from an already validated physical RAM slice.
     fn finish_write(&mut self, block: u32, data: &[u8; SSD_BLOCK_SIZE]) {
         self.status = if self.write_block(block, data) {
             SSD_STATUS_DONE
@@ -198,48 +200,50 @@ impl SsdDevice {
         if file.write_all(data).is_err() {
             return false;
         }
-        let _ = file.flush();
+        file.flush().is_ok()
+    }
+}
+
+impl SsdDevice {
+    // A DMA transfer is entirely physical and independent of the current CPU
+    // address space/mode. Reject its entire range before disk or RAM mutation.
+    fn service(&mut self, ram: &mut super::ram::Ram) -> bool {
+        let Some(op) = self.take_pending() else {
+            return false;
+        };
+        let (block, addr) = match op {
+            SsdOp::Read { block, buf_addr } | SsdOp::Write { block, buf_addr } => (block, buf_addr),
+        };
+        if Self::block_offset(block).is_none() || ram.range(addr, SSD_BLOCK_SIZE).is_none() {
+            self.status = SSD_STATUS_ERROR;
+            return true;
+        }
+        match op {
+            SsdOp::Read { .. } => {
+                if let Some(data) = self.finish_read(block) {
+                    assert!(ram.write(addr, &data), "prevalidated DMA range");
+                }
+            }
+            SsdOp::Write { .. } => {
+                let data: &[u8; SSD_BLOCK_SIZE] =
+                    ram.read(addr, SSD_BLOCK_SIZE).unwrap().try_into().unwrap();
+                self.finish_write(block, data);
+            }
+        }
         true
     }
 }
 
 impl Machine {
-    // Service an SSD command-register write: the device validates and latches
-    // the command and reports BUSY. The transfer completes in service_ssd at
-    // the next device poll, like real DMA finishing after the store retires.
     pub(super) fn service_ssd_dma(&mut self, cmd: u32) {
         self.ssd.begin_command(cmd);
     }
 
-    // Complete an in-flight SSD command. The device owns the status register
-    // and the disk half of the transfer; the bus moves the RAM half (scatter
-    // for reads, gather for writes), since only it can reach RAM. Completion —
-    // success or error — raises the SSD IRQ so the guest can stop waiting and
-    // read STATUS. Called from poll_devices. Kept as a Machine method so it can
-    // touch both the device and RAM, but housed here to keep all SSD behaviour
-    // in one file.
     pub(super) fn service_ssd(&mut self) {
-        let Some(op) = self.ssd.take_pending() else {
-            return;
-        };
-        match op {
-            SsdOp::Read { block, buf_addr } => {
-                if let Some(data) = self.ssd.finish_read(block) {
-                    for (i, byte) in data.iter().enumerate() {
-                        self.bus_write_byte(buf_addr + i as u32, *byte);
-                    }
-                }
-            }
-            SsdOp::Write { block, buf_addr } => {
-                let mut data = [0u8; SSD_BLOCK_SIZE];
-                for (i, byte) in data.iter_mut().enumerate() {
-                    *byte = self.bus_read_byte(buf_addr + i as u32);
-                }
-                self.ssd.finish_write(block, &data);
-            }
+        if self.ssd.service(&mut self.ram) {
+            self.irq_cause |= IRQ_CAUSE_SSD;
+            self.pending_irq = true;
         }
-        self.irq_cause |= IRQ_CAUSE_SSD;
-        self.pending_irq = true;
     }
 }
 
@@ -269,18 +273,18 @@ mod tests {
         let (mut m, path) = machine_with_disk("roundtrip");
 
         // Write a pattern from RAM to block 3.
-        m.bus_write(0x1000, 0xDEAD_BEEF);
-        m.bus_write(SSD_BLOCK_ADDR, 3);
-        m.bus_write(SSD_ADDR_ADDR, 0x1000);
-        m.bus_write(SSD_CMD_ADDR, SSD_CMD_WRITE);
+        m.bus_write_physical(0x1000, 0xDEAD_BEEF);
+        m.bus_write_physical(SSD_BLOCK_ADDR, 3);
+        m.bus_write_physical(SSD_ADDR_ADDR, 0x1000);
+        m.bus_write_physical(SSD_CMD_ADDR, SSD_CMD_WRITE);
         assert_eq!(
-            m.bus_read(SSD_STATUS_ADDR),
+            m.bus_read_physical(SSD_STATUS_ADDR),
             SSD_STATUS_BUSY,
             "busy until the device is polled"
         );
         assert!(!m.pending_irq, "no IRQ before the transfer completes");
         m.poll_devices();
-        assert_eq!(m.bus_read(SSD_STATUS_ADDR), SSD_STATUS_DONE);
+        assert_eq!(m.bus_read_physical(SSD_STATUS_ADDR), SSD_STATUS_DONE);
         assert_ne!(
             m.irq_cause & IRQ_CAUSE_SSD,
             0,
@@ -291,14 +295,14 @@ mod tests {
         // Read it back into a different RAM buffer.
         m.irq_cause = 0;
         m.pending_irq = false;
-        m.bus_write(SSD_BLOCK_ADDR, 3);
-        m.bus_write(SSD_ADDR_ADDR, 0x2000);
-        m.bus_write(SSD_CMD_ADDR, SSD_CMD_READ);
-        assert_eq!(m.bus_read(SSD_STATUS_ADDR), SSD_STATUS_BUSY);
+        m.bus_write_physical(SSD_BLOCK_ADDR, 3);
+        m.bus_write_physical(SSD_ADDR_ADDR, 0x2000);
+        m.bus_write_physical(SSD_CMD_ADDR, SSD_CMD_READ);
+        assert_eq!(m.bus_read_physical(SSD_STATUS_ADDR), SSD_STATUS_BUSY);
         m.poll_devices();
-        assert_eq!(m.bus_read(SSD_STATUS_ADDR), SSD_STATUS_DONE);
+        assert_eq!(m.bus_read_physical(SSD_STATUS_ADDR), SSD_STATUS_DONE);
         assert_eq!(
-            m.bus_read(0x2000),
+            m.bus_read_physical(0x2000),
             0xDEAD_BEEF,
             "block round-trips through the disk"
         );
@@ -309,10 +313,79 @@ mod tests {
     #[test]
     fn invalid_command_errors_without_irq() {
         let (mut m, path) = machine_with_disk("badcmd");
-        m.bus_write(SSD_CMD_ADDR, 0x99);
-        assert_eq!(m.bus_read(SSD_STATUS_ADDR), SSD_STATUS_ERROR);
+        m.bus_write_physical(SSD_CMD_ADDR, 0x99);
+        assert_eq!(m.bus_read_physical(SSD_STATUS_ADDR), SSD_STATUS_ERROR);
         m.poll_devices();
         assert!(!m.pending_irq, "nothing was latched, so nothing completes");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn invalid_dma_ranges_do_not_touch_ram_disk_or_mmio() {
+        use crate::constants::{IRQ_CAUSE_ADDR, RAM_END_EXCLUSIVE, VRAM_BASE};
+        let (mut m, path) = machine_with_disk("dma-bounds");
+        m.bus_write_physical(0, 0xaabb_ccdd);
+        m.bus_write_physical(RAM_END_EXCLUSIVE - 4, 0x1122_3344);
+        for addr in [
+            RAM_END_EXCLUSIVE - 4,
+            VRAM_BASE,
+            IRQ_CAUSE_ADDR,
+            u32::MAX - 1,
+        ] {
+            for cmd in [SSD_CMD_READ, SSD_CMD_WRITE] {
+                m.bus_write_physical(SSD_ADDR_ADDR, addr);
+                m.bus_write_physical(SSD_CMD_ADDR, cmd);
+                m.service_ssd();
+                assert_eq!(m.ssd.status(), SSD_STATUS_ERROR);
+                assert_eq!(m.bus_read_physical(0), 0xaabb_ccdd);
+                assert_eq!(m.bus_read_physical(RAM_END_EXCLUSIVE - 4), 0x1122_3344);
+                assert_eq!(m.display.vram[0], 0);
+                assert_eq!(m.irq_cause, IRQ_CAUSE_SSD);
+                assert_eq!(m.ssd.read_block(0).unwrap()[..4], [0; 4]);
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn pending_dma_keeps_its_original_operands_and_ignores_busy_commands() {
+        let (mut m, path) = machine_with_disk("latched-command");
+        m.bus_write_physical(0x1000, 0xaabb_ccdd);
+        m.bus_write_physical(0x2000, 0x1122_3344);
+        m.bus_write_physical(SSD_BLOCK_ADDR, 1);
+        m.bus_write_physical(SSD_ADDR_ADDR, 0x1000);
+        m.bus_write_physical(SSD_CMD_ADDR, SSD_CMD_WRITE);
+        m.bus_write_physical(SSD_BLOCK_ADDR, 2);
+        m.bus_write_physical(SSD_ADDR_ADDR, 0x2000);
+        m.bus_write_physical(SSD_CMD_ADDR, SSD_CMD_READ);
+        m.bus_write_physical(SSD_CMD_ADDR, 0xff);
+        assert_eq!(m.ssd.status(), SSD_STATUS_BUSY);
+        m.service_ssd();
+        assert_eq!(m.ssd.status(), SSD_STATUS_DONE);
+        assert_eq!(
+            m.ssd.read_block(1).unwrap()[..4],
+            0xaabb_ccddu32.to_be_bytes()
+        );
+        assert_eq!(m.ssd.read_block(2).unwrap()[..4], [0; 4]);
+        assert_eq!(m.bus_read_physical(0x2000), 0x1122_3344);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn short_execution_budgets_still_service_devices() {
+        let (mut m, path) = machine_with_disk("small-budgets");
+        m.set_timer_interval(0);
+        // mov r0,r0 at enough addresses to cover a polling interval.
+        for i in 0..1001 {
+            m.bus_write_physical(i * 4, 0x01 << 26);
+        }
+        m.run_frame_budget(1).unwrap();
+        m.bus_write_physical(SSD_ADDR_ADDR, 0x10000);
+        m.bus_write_physical(SSD_CMD_ADDR, SSD_CMD_READ);
+        for _ in 0..1000 {
+            m.run_frame_budget(1).unwrap();
+        }
+        assert_eq!(m.ssd.status(), SSD_STATUS_DONE);
+        std::fs::remove_file(path).unwrap();
     }
 }

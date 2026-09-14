@@ -58,6 +58,8 @@ pub const DMA2D_STRIDE_ADDR: u32 = IO_BASE + 0x30;
 pub const DMA2D_CMD_ADDR: u32 = IO_BASE + 0x34; // W: DMA2D_CMD_*
 
 pub const DISPLAY_SWAP_ADDR: u32 = IO_BASE + 0x38;
+pub const DISPLAY_WIDTH_ADDR: u32 = IO_BASE + 0xD0; // R: pixel width
+pub const DISPLAY_HEIGHT_ADDR: u32 = IO_BASE + 0xD4; // R: pixel height
 
 pub const DMA2D_SRC_ADDR: u32 = IO_BASE + 0x90; // source: RAM or VRAM address
 pub const DMA2D_SRC_STRIDE_ADDR: u32 = IO_BASE + 0x94; // COPY*: pixels, MASK_A8: bytes

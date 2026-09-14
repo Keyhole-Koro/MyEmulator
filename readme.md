@@ -65,6 +65,14 @@ The register map lives in `src/constants.rs`; the guest mirrors it in
 `system/MyOS/src/ui/graphics.mln`, `system/MyKernel/src/io/mouse.mln` and
 `system/MyKernel/src/io/keyboard.mln`.
 
+### Board and execution contracts
+
+Display geometry is configured in `config/hardware.conf` and exposed to MyOS
+through read-only MMIO at `0x240000D0` (width) / `0x240000D4` (height).
+The emulator builds independently of the MyOS source tree.
+See [CPU, memory and device contracts](docs/execution-contracts.md) for exception
+semantics, access widths, DMA ownership and the shared execution loop.
+
 ### 2D accelerator (DMA2D)
 
 `DEST/WIDTH/HEIGHT/STRIDE` describe the destination rectangle in VRAM,

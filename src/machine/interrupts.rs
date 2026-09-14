@@ -112,11 +112,11 @@ impl Machine {
     // Called by the EI/DI instructions. Keeps the SR's IE bit in sync with the
     // internal flag so the kernel/debugger can observe interrupt state.
     pub(super) fn set_interrupt_enable(&mut self, enable: bool) {
-        self.interrupt_enable = enable;
+        self.cpu.interrupt_enable = enable;
         if enable {
-            self.status_register |= SR_IE;
+            self.cpu.status_register |= SR_IE;
         } else {
-            self.status_register &= !SR_IE;
+            self.cpu.status_register &= !SR_IE;
         }
     }
 
@@ -127,7 +127,10 @@ impl Machine {
     pub(super) fn poll_devices(&mut self) {
         self.poll_serial_input();
 
-        if self.timer.service(self.instrs_retired, self.waiting_for_interrupt) {
+        if self
+            .timer
+            .service(self.cpu.instrs_retired, self.cpu.waiting_for_interrupt)
+        {
             self.irq_cause |= IRQ_CAUSE_TIMER;
             self.pending_irq = true;
         }
@@ -142,57 +145,74 @@ impl Machine {
     // instruction) costs nothing measurable.
     #[inline]
     pub(super) fn try_dispatch_irq(&mut self) -> Result<(), String> {
-        let is_sync_trap = (self.irq_cause
-            & (crate::constants::IRQ_CAUSE_SYSCALL
-                | crate::constants::IRQ_CAUSE_PAGE_FAULT
-                | crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION))
-            != 0;
+        let trap = self.pending_trap;
+        if trap.is_none() && !(self.cpu.interrupt_enable && self.pending_irq) {
+            return Ok(());
+        }
+        let vector = self.bus_read_physical(IRQ_VECTOR_ADDR);
+        if vector == 0 || !is_ram_address(vector) || !vector.is_multiple_of(4) {
+            return if trap.is_some() {
+                Err("Synchronous trap without a valid IRQ vector".to_string())
+            } else {
+                Ok(())
+            };
+        }
 
-        if (self.interrupt_enable || is_sync_trap) && self.pending_irq {
-            let vector = self.bus_read_physical(IRQ_VECTOR_ADDR);
-            // Guard against an unregistered vector. The handler lives in RAM, so
-            // a vector outside RAM (0, or the 0xFFFF_FFFF an unmapped I/O slot
-            // reads back) means "no handler installed": leave the IRQ pending so
-            // it fires once a real handler is registered.
-            if is_ram_address(vector) {
-                self.pending_irq = false;
-                self.waiting_for_interrupt = false;
+        let was_user = self.is_user_mode();
+        let sr = self.status_register();
+        let frame_top = if was_user {
+            self.mmu.kernel_sp
+        } else {
+            self.cpu.stack_pointer
+        };
+        let frame_sp = frame_top
+            .checked_sub(8)
+            .ok_or_else(|| "Invalid interrupt stack".to_string())?;
 
-                let was_user = self.is_user_mode();
-                if was_user {
-                    std::mem::swap(&mut self.stack_pointer, &mut self.mmu.kernel_sp);
-                }
+        // Translate the complete frame with kernel permissions before mutating
+        // SP, KERNEL_SP, pending state or RAM. Failure is a fatal double fault.
+        self.restore_status_register(sr & !crate::constants::SR_USER & !SR_IE);
+        let prepared = (|| {
+            let pc_addr = self.prepare_stack_word(frame_sp + 4, super::mmu::AccessType::Write)?;
+            let sr_addr = self.prepare_stack_word(frame_sp, super::mmu::AccessType::Write)?;
+            Ok::<_, super::cpu::CpuError>((pc_addr, sr_addr))
+        })();
+        self.restore_status_register(sr);
+        let (pc_addr, sr_addr) = prepared.map_err(|e| format!("Cannot enter interrupt: {e}"))?;
 
-                // Architectural SR (mode/IE plus the *live* condition flags);
-                // see registers.rs for why it must be recomposed.
-                let sr = self.status_register();
-
-                // Switch to kernel mode and disable further interrupts before pushing to kernel stack
-                self.status_register &= !crate::constants::SR_USER;
-                self.set_interrupt_enable(false);
-
-                if let Some(stack) = self.irq_check.as_mut() {
-                    stack.push(super::IrqSnapshot {
-                        sp: self.stack_pointer,
-                        pc: self.program_counter,
-                        bp: self.base_pointer,
-                        lr: self.link_register,
-                        regs: self.registers,
-                        flags: (self.carry_flag, self.zero_flag, self.sign_flag, self.overflow_flag),
-                        sr,
-                        cause: self.irq_cause,
-                    });
-                }
-                self.push(self.program_counter)?;
-                self.push(sr)?;
-                self.program_counter = vector;
-                // Timer-handler runtime measurement for the starvation warning:
-                // note when a timer IRQ enters its handler; the iret opcode
-                // closes the measurement.
-                if self.irq_cause & IRQ_CAUSE_TIMER != 0 {
-                    self.timer_handler_entered = Some(std::time::Instant::now());
-                }
-            }
+        if let Some(cause) = trap {
+            self.irq_cause |= cause;
+        }
+        if let Some(stack) = self.irq_check.as_mut() {
+            stack.push(super::IrqSnapshot {
+                sp: self.cpu.stack_pointer,
+                pc: self.cpu.program_counter,
+                bp: self.cpu.base_pointer,
+                lr: self.cpu.link_register,
+                regs: self.cpu.registers,
+                flags: (
+                    self.cpu.carry_flag,
+                    self.cpu.zero_flag,
+                    self.cpu.sign_flag,
+                    self.cpu.overflow_flag,
+                ),
+                sr,
+                cause: self.irq_cause,
+            });
+        }
+        self.write_prepared_word(pc_addr, self.cpu.program_counter);
+        self.write_prepared_word(sr_addr, sr);
+        if was_user {
+            self.mmu.kernel_sp = self.cpu.stack_pointer;
+        }
+        self.cpu.stack_pointer = frame_sp;
+        self.restore_status_register(sr & !crate::constants::SR_USER & !SR_IE);
+        self.pending_trap = None;
+        self.pending_irq = false;
+        self.cpu.waiting_for_interrupt = false;
+        self.cpu.program_counter = vector;
+        if self.irq_cause & IRQ_CAUSE_TIMER != 0 {
+            self.timer_handler_entered = Some(std::time::Instant::now());
         }
         Ok(())
     }
@@ -209,8 +229,8 @@ mod tests {
     fn lsr_idle_reports_thre_only() {
         let m = Machine::new(false, true);
         // No input queued: transmitter ready, no data-ready bit.
-        assert_eq!(m.bus_read(SERIAL_LSR_ADDR), SERIAL_LSR_THRE);
-        assert_eq!(m.bus_read(SERIAL_LSR_ADDR) & SERIAL_LSR_DR, 0);
+        assert_eq!(m.bus_read_physical(SERIAL_LSR_ADDR), SERIAL_LSR_THRE);
+        assert_eq!(m.bus_read_physical(SERIAL_LSR_ADDR) & SERIAL_LSR_DR, 0);
     }
 
     #[test]
@@ -218,19 +238,19 @@ mod tests {
         let mut m = Machine::new(false, true);
         m.ingest_serial_bytes(b"AB");
         assert_ne!(
-            m.bus_read(SERIAL_LSR_ADDR) & SERIAL_LSR_DR,
+            m.bus_read_physical(SERIAL_LSR_ADDR) & SERIAL_LSR_DR,
             0,
             "data-ready set while a byte is queued"
         );
-        assert_eq!(m.bus_load(SERIAL_RX_ADDR), u32::from(b'A'));
-        assert_eq!(m.bus_load(SERIAL_RX_ADDR), u32::from(b'B'));
+        assert_eq!(m.bus_load(SERIAL_RX_ADDR).unwrap(), u32::from(b'A'));
+        assert_eq!(m.bus_load(SERIAL_RX_ADDR).unwrap(), u32::from(b'B'));
         assert_eq!(
-            m.bus_read(SERIAL_LSR_ADDR) & SERIAL_LSR_DR,
+            m.bus_read_physical(SERIAL_LSR_ADDR) & SERIAL_LSR_DR,
             0,
             "data-ready clears once drained"
         );
         assert_eq!(
-            m.bus_load(SERIAL_RX_ADDR),
+            m.bus_load(SERIAL_RX_ADDR).unwrap(),
             0,
             "reading an empty RX yields 0"
         );
@@ -246,13 +266,12 @@ mod tests {
 
     #[test]
     fn rx_does_not_disturb_instruction_fetch() {
-        // bus_read (used for fetch/stack) must NOT consume the RX byte; only the
-        // LD instructions (bus_load) do.
+        // Debugger physical peeks must not consume RX; guest loads do.
         let mut m = Machine::new(false, true);
         m.ingest_serial_bytes(b"Z");
-        let _ = m.bus_read(SERIAL_RX_ADDR);
+        let _ = m.bus_read_physical(SERIAL_RX_ADDR);
         assert_eq!(
-            m.bus_load(SERIAL_RX_ADDR),
+            m.bus_load(SERIAL_RX_ADDR).unwrap(),
             u32::from(b'Z'),
             "byte still there"
         );
@@ -262,13 +281,13 @@ mod tests {
     fn received_input_vectors_to_handler_when_enabled() {
         let mut m = Machine::new(false, true);
         let handler = 0x0000_0100u32; // a RAM address
-        m.bus_write(IRQ_VECTOR_ADDR, handler);
+        m.bus_write_physical(IRQ_VECTOR_ADDR, handler);
         m.set_interrupt_enable(true);
         m.ingest_serial_bytes(b"z");
         m.try_dispatch_irq().unwrap();
-        assert_eq!(m.program_counter, handler, "PC vectored to the handler");
+        assert_eq!(m.cpu.program_counter, handler, "PC vectored to the handler");
         assert!(
-            !m.interrupt_enable,
+            !m.cpu.interrupt_enable,
             "interrupts masked entering the handler"
         );
     }
@@ -280,10 +299,10 @@ mod tests {
         let handler = 0x0000_0200u32;
         const HALT: u32 = 0x3F << 26;
         const MOV_R1_R1: u32 = (0x01 << 26) | (1 << 21) | (1 << 16);
-        m.bus_write(IRQ_VECTOR_ADDR, handler);
-        m.bus_write(handler, HALT);
+        m.bus_write_physical(IRQ_VECTOR_ADDR, handler);
+        m.bus_write_physical(handler, HALT);
         for i in 0..4u32 {
-            m.bus_write(i * 4, MOV_R1_R1);
+            m.bus_write_physical(i * 4, MOV_R1_R1);
         }
         m.set_interrupt_enable(true);
         m.ingest_serial_bytes(b"x");
@@ -296,7 +315,7 @@ mod tests {
         };
         m.execute_with_debug(opts).unwrap();
         assert!(
-            m.halted,
+            m.cpu.halted,
             "the handler's HALT ran as the very next instruction"
         );
     }
@@ -304,11 +323,11 @@ mod tests {
     #[test]
     fn no_input_does_not_interrupt() {
         let mut m = Machine::new(false, true);
-        m.bus_write(IRQ_VECTOR_ADDR, 0x0000_0100);
+        m.bus_write_physical(IRQ_VECTOR_ADDR, 0x0000_0100);
         m.set_interrupt_enable(true);
         m.poll_devices();
         m.try_dispatch_irq().unwrap();
-        assert_eq!(m.program_counter, 0, "no IRQ without a source");
+        assert_eq!(m.cpu.program_counter, 0, "no IRQ without a source");
     }
 
     #[test]
@@ -316,9 +335,9 @@ mod tests {
         use crate::constants::{MOUSE_BUTTONS_ADDR, MOUSE_BUTTON_LEFT, MOUSE_X_ADDR, MOUSE_Y_ADDR};
         let mut m = Machine::new(false, true);
         m.set_mouse_state(320, 240, MOUSE_BUTTON_LEFT);
-        assert_eq!(m.bus_read(MOUSE_X_ADDR), 320);
-        assert_eq!(m.bus_read(MOUSE_Y_ADDR), 240);
-        assert_eq!(m.bus_read(MOUSE_BUTTONS_ADDR), MOUSE_BUTTON_LEFT);
+        assert_eq!(m.bus_read_physical(MOUSE_X_ADDR), 320);
+        assert_eq!(m.bus_read_physical(MOUSE_Y_ADDR), 240);
+        assert_eq!(m.bus_read_physical(MOUSE_BUTTONS_ADDR), MOUSE_BUTTON_LEFT);
     }
 
     #[test]
@@ -339,19 +358,29 @@ mod tests {
         use crate::constants::{DISPLAY_SWAP_ADDR, VRAM_BASE};
         let mut m = Machine::new(false, true);
         // Draw into the back buffer.
-        m.bus_write(VRAM_BASE, 0x00AA_BBCC);
-        assert!(!m.swapped, "no swap yet");
-        assert_eq!(m.front[0], 0, "front untouched before swap");
+        m.bus_write_physical(VRAM_BASE, 0x00AA_BBCC);
+        assert!(!m.display.swapped, "no swap yet");
+        assert_eq!(m.display.front[0], 0, "front untouched before swap");
 
         // Present: back -> front.
-        m.bus_write(DISPLAY_SWAP_ADDR, 1);
-        assert!(m.swapped, "swap latched");
-        assert_eq!(m.front[0], 0x00AA_BBCC, "front now holds the drawn pixel");
+        m.bus_write_physical(DISPLAY_SWAP_ADDR, 1);
+        assert!(m.display.swapped, "swap latched");
+        assert_eq!(
+            m.display.front[0], 0x00AA_BBCC,
+            "front now holds the drawn pixel"
+        );
 
         // Further drawing lands in back only, not shown until the next swap.
-        m.bus_write(VRAM_BASE, 0x0011_2233);
-        assert_eq!(m.front[0], 0x00AA_BBCC, "front unchanged until next swap");
-        assert_eq!(m.bus_read(VRAM_BASE), 0x0011_2233, "back has the new pixel");
+        m.bus_write_physical(VRAM_BASE, 0x0011_2233);
+        assert_eq!(
+            m.display.front[0], 0x00AA_BBCC,
+            "front unchanged until next swap"
+        );
+        assert_eq!(
+            m.bus_read_physical(VRAM_BASE),
+            0x0011_2233,
+            "back has the new pixel"
+        );
     }
 
     #[test]
@@ -361,13 +390,17 @@ mod tests {
         // A previous restore left ZERO set in the mirrored SR field ...
         m.restore_status_register(SR_IE | SR_ZERO);
         // ... but the ALU has since cleared the live flag.
-        m.zero_flag = false;
+        m.cpu.zero_flag = false;
         m.bus_write_physical(IRQ_VECTOR_ADDR, 0x1000);
         m.irq_cause = crate::constants::IRQ_CAUSE_TIMER;
         m.pending_irq = true;
         m.try_dispatch_irq().unwrap();
-        let pushed_sr = m.bus_read_physical(m.stack_pointer);
+        let pushed_sr = m.bus_read_physical(m.cpu.stack_pointer);
         assert_eq!(pushed_sr & SR_ZERO, 0, "stale ZERO bit must not be pushed");
-        assert_ne!(pushed_sr & SR_IE, 0, "IE at entry is recorded in the pushed SR");
+        assert_ne!(
+            pushed_sr & SR_IE,
+            0,
+            "IE at entry is recorded in the pushed SR"
+        );
     }
 }

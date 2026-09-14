@@ -3,10 +3,12 @@ use crate::instruction::{
     add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26, Opcode,
 };
 
+use super::cpu::CpuError;
+use super::mmu::MmuFault;
 use super::Machine;
 
 impl Machine {
-    pub(super) fn execute_instruction(&mut self, raw_instruction: u32) -> Result<(), String> {
+    pub(super) fn execute_instruction(&mut self, raw_instruction: u32) -> Result<(), CpuError> {
         let inst = decode_instruction(raw_instruction);
 
         if self.verbose {
@@ -25,10 +27,11 @@ impl Machine {
             return Err(format!(
                 "Unknown opcode: 0x{:X} at pc=0x{:08X} (sp=0x{:08X}, lr=0x{:08X})",
                 inst.opcode,
-                self.program_counter.wrapping_sub(4),
-                self.stack_pointer,
-                self.link_register
-            ));
+                self.cpu.program_counter.wrapping_sub(4),
+                self.cpu.stack_pointer,
+                self.cpu.link_register
+            )
+            .into());
         };
 
         if self.is_user_mode() {
@@ -40,16 +43,35 @@ impl Machine {
                 | Opcode::Ei
                 | Opcode::Di
                 | Opcode::Wfi => {
-                    self.mmu
-                        .record_fault(crate::machine::mmu::MmuFault::PrivilegeViolation {
-                            vaddr: self.program_counter.wrapping_sub(4),
-                        });
-                    self.irq_cause |= crate::constants::IRQ_CAUSE_PRIVILEGE_VIOLATION;
-                    self.pending_irq = true;
-                    return Ok(());
+                    return Err(MmuFault::PrivilegeViolation {
+                        vaddr: self.cpu.program_counter.wrapping_sub(4),
+                    }
+                    .into());
                 }
                 _ => {}
             }
+        }
+
+        // Check the destination before any operand can consume MMIO or alter SP.
+        if matches!(
+            opcode,
+            Opcode::Mov
+                | Opcode::Movi
+                | Opcode::Movis
+                | Opcode::Ld
+                | Opcode::Ldb
+                | Opcode::Add
+                | Opcode::Addis
+                | Opcode::Sub
+                | Opcode::And
+                | Opcode::Or
+                | Opcode::Xor
+                | Opcode::Shl
+                | Opcode::Shr
+                | Opcode::Pop
+                | Opcode::In
+        ) {
+            self.validate_register_write(inst.reg1)?;
         }
 
         match opcode {
@@ -75,7 +97,7 @@ impl Machine {
             Opcode::Ld => {
                 let addr = self.get_register(inst.reg2)?;
                 self.profile_mem_read(addr);
-                let value = self.bus_load(addr);
+                let value = self.bus_load(addr)?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
@@ -83,12 +105,12 @@ impl Machine {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)?;
                 self.profile_mem_write(addr);
-                self.bus_write(addr, value);
+                self.bus_write(addr, value)?;
             }
             Opcode::Ldb => {
                 let addr = self.get_register(inst.reg2)?;
                 self.profile_mem_read(addr);
-                let value = self.bus_load_byte(addr) as u32;
+                let value = self.bus_load_byte(addr)? as u32;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
@@ -96,7 +118,7 @@ impl Machine {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)? as u8;
                 self.profile_mem_write(addr);
-                self.bus_write_byte(addr, value);
+                self.bus_write_byte(addr, value)?;
             }
             Opcode::Add => {
                 let lhs = self.get_register(inst.reg1)?;
@@ -117,10 +139,10 @@ impl Machine {
                 let rhs = self.get_register(inst.reg2)?;
                 let result = lhs.wrapping_sub(rhs);
 
-                self.carry_flag = lhs < rhs;
-                self.zero_flag = result == 0;
-                self.sign_flag = (result as i32) < 0;
-                self.overflow_flag = (((lhs as i32) < 0) != ((rhs as i32) < 0))
+                self.cpu.carry_flag = lhs < rhs;
+                self.cpu.zero_flag = result == 0;
+                self.cpu.sign_flag = (result as i32) < 0;
+                self.cpu.overflow_flag = (((lhs as i32) < 0) != ((rhs as i32) < 0))
                     && (((lhs as i32) < 0) != ((result as i32) < 0));
 
                 self.set_register(inst.reg1, result)?;
@@ -130,10 +152,10 @@ impl Machine {
                 let rhs = self.get_register(inst.reg2)?;
                 let result = lhs.wrapping_sub(rhs);
 
-                self.carry_flag = lhs < rhs;
-                self.zero_flag = result == 0;
-                self.sign_flag = (result as i32) < 0;
-                self.overflow_flag = (((lhs as i32) < 0) != ((rhs as i32) < 0))
+                self.cpu.carry_flag = lhs < rhs;
+                self.cpu.zero_flag = result == 0;
+                self.cpu.sign_flag = (result as i32) < 0;
+                self.cpu.overflow_flag = (((lhs as i32) < 0) != ((rhs as i32) < 0))
                     && (((lhs as i32) < 0) != ((result as i32) < 0));
             }
             Opcode::And => {
@@ -162,48 +184,56 @@ impl Machine {
                 self.update_zero_flag(value);
             }
             Opcode::Call => {
-                self.link_register = self.program_counter;
+                self.cpu.link_register = self.cpu.program_counter;
                 let offset = sign_extend_26(inst.imm);
-                self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                self.cpu.program_counter =
+                    add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
             }
             Opcode::Jmp => {
                 let offset = sign_extend_26(inst.imm);
-                self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                self.cpu.program_counter =
+                    add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
             }
             Opcode::Jz => {
-                if self.zero_flag {
+                if self.cpu.zero_flag {
                     let offset = sign_extend_26(inst.imm);
-                    self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                    self.cpu.program_counter =
+                        add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
                 }
             }
             Opcode::Jnz => {
-                if !self.zero_flag {
+                if !self.cpu.zero_flag {
                     let offset = sign_extend_26(inst.imm);
-                    self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                    self.cpu.program_counter =
+                        add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
                 }
             }
             Opcode::Jg => {
-                if !self.zero_flag && (self.sign_flag == self.overflow_flag) {
+                if !self.cpu.zero_flag && (self.cpu.sign_flag == self.cpu.overflow_flag) {
                     let offset = sign_extend_26(inst.imm);
-                    self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                    self.cpu.program_counter =
+                        add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
                 }
             }
             Opcode::Jl => {
-                if self.sign_flag != self.overflow_flag {
+                if self.cpu.sign_flag != self.cpu.overflow_flag {
                     let offset = sign_extend_26(inst.imm);
-                    self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                    self.cpu.program_counter =
+                        add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
                 }
             }
             Opcode::Ja => {
-                if !self.carry_flag && !self.zero_flag {
+                if !self.cpu.carry_flag && !self.cpu.zero_flag {
                     let offset = sign_extend_26(inst.imm);
-                    self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                    self.cpu.program_counter =
+                        add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
                 }
             }
             Opcode::Jb => {
-                if self.carry_flag {
+                if self.cpu.carry_flag {
                     let offset = sign_extend_26(inst.imm);
-                    self.program_counter = add_signed(self.program_counter, offset.wrapping_sub(4));
+                    self.cpu.program_counter =
+                        add_signed(self.cpu.program_counter, offset.wrapping_sub(4));
                 }
             }
             Opcode::Push => {
@@ -216,13 +246,13 @@ impl Machine {
                 self.update_zero_flag(value);
             }
             Opcode::In => {
-                let value = self.bus_load(IO_BASE.wrapping_add(inst.imm));
+                let value = self.bus_load(IO_BASE.wrapping_add(inst.imm))?;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }
             Opcode::Out => {
                 let value = self.get_register(inst.reg1)?;
-                self.bus_write(IO_BASE.wrapping_add(inst.imm), value);
+                self.bus_write(IO_BASE.wrapping_add(inst.imm), value)?;
             }
             Opcode::Ei => {
                 self.set_interrupt_enable(true);
@@ -231,17 +261,16 @@ impl Machine {
                 self.set_interrupt_enable(false);
             }
             Opcode::Syscall => {
-                self.irq_cause |= crate::constants::IRQ_CAUSE_SYSCALL;
-                self.pending_irq = true;
+                self.pending_trap = Some(crate::constants::IRQ_CAUSE_SYSCALL);
             }
             Opcode::Iret => {
                 // Reverse of the interrupt entry push order (PC then SR).
-                let sr = self.pop()?;
-                self.program_counter = self.pop()?;
+                let (sr, pc) = self.pop_interrupt_frame()?;
+                self.cpu.program_counter = pc;
 
                 let returning_to_user = (sr & crate::constants::SR_USER) != 0;
                 if returning_to_user {
-                    std::mem::swap(&mut self.stack_pointer, &mut self.mmu.kernel_sp);
+                    std::mem::swap(&mut self.cpu.stack_pointer, &mut self.mmu.kernel_sp);
                 }
 
                 // SR is architectural state; restore all mirrored execution
@@ -251,17 +280,38 @@ impl Machine {
                 if let Some(stack) = self.irq_check.as_mut() {
                     // A context switch resumes a different frame; only compare
                     // when we are back on the frame that was interrupted.
-                    if let Some(pos) = stack.iter().rposition(|s| s.sp == self.stack_pointer) {
+                    if let Some(pos) = stack.iter().rposition(|s| s.sp == self.cpu.stack_pointer) {
                         let snap = stack.remove(pos);
                         let mut diffs = Vec::new();
-                        if snap.pc != self.program_counter { diffs.push(format!("pc {:#x}->{:#x}", snap.pc, self.program_counter)); }
-                        if snap.bp != self.base_pointer { diffs.push(format!("bp {:#x}->{:#x}", snap.bp, self.base_pointer)); }
-                        if snap.lr != self.link_register { diffs.push(format!("lr {:#x}->{:#x}", snap.lr, self.link_register)); }
-                        for i in 0..8 {
-                            if snap.regs[i] != self.registers[i] { diffs.push(format!("r{} {:#x}->{:#x}", i, snap.regs[i], self.registers[i])); }
+                        if snap.pc != self.cpu.program_counter {
+                            diffs.push(format!(
+                                "pc {:#x}->{:#x}",
+                                snap.pc, self.cpu.program_counter
+                            ));
                         }
-                        let flags = (self.carry_flag, self.zero_flag, self.sign_flag, self.overflow_flag);
-                        if snap.flags != flags { diffs.push(format!("flags {:?}->{:?}", snap.flags, flags)); }
+                        if snap.bp != self.cpu.base_pointer {
+                            diffs.push(format!("bp {:#x}->{:#x}", snap.bp, self.cpu.base_pointer));
+                        }
+                        if snap.lr != self.cpu.link_register {
+                            diffs.push(format!("lr {:#x}->{:#x}", snap.lr, self.cpu.link_register));
+                        }
+                        for i in 0..8 {
+                            if snap.regs[i] != self.cpu.registers[i] {
+                                diffs.push(format!(
+                                    "r{} {:#x}->{:#x}",
+                                    i, snap.regs[i], self.cpu.registers[i]
+                                ));
+                            }
+                        }
+                        let flags = (
+                            self.cpu.carry_flag,
+                            self.cpu.zero_flag,
+                            self.cpu.sign_flag,
+                            self.cpu.overflow_flag,
+                        );
+                        if snap.flags != flags {
+                            diffs.push(format!("flags {:?}->{:?}", snap.flags, flags));
+                        }
                         if !diffs.is_empty() {
                             eprintln!("[irq-check] cause={:#x} sp={:#x} pushed_sr={:#x} popped_sr={:#x}: {}", snap.cause, snap.sp, snap.sr, sr, diffs.join(", "));
                         }
@@ -269,15 +319,15 @@ impl Machine {
                 }
             }
             Opcode::Halt => {
-                self.halted = true;
+                self.cpu.halted = true;
             }
             Opcode::Wfi => {
                 // WFI: wait for interrupt. Only stall if interrupts are
                 // enabled; otherwise act as a NOP (matches ARM semantics).
                 // With IE=false no IRQ could ever wake the CPU, so stalling
                 // would be a permanent deadlock.
-                if self.interrupt_enable {
-                    self.waiting_for_interrupt = true;
+                if self.cpu.interrupt_enable {
+                    self.cpu.waiting_for_interrupt = true;
                 }
             }
         }

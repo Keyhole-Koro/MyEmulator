@@ -1,4 +1,4 @@
-use crate::constants::{RAM_END_EXCLUSIVE, RAM_START};
+use crate::constants::RAM_END_EXCLUSIVE;
 
 use super::Machine;
 
@@ -6,12 +6,12 @@ impl Machine {
     pub fn display_stack(&self) {
         println!("Stack Contents:");
 
-        if self.stack_pointer == RAM_END_EXCLUSIVE {
+        if self.cpu.stack_pointer == RAM_END_EXCLUSIVE {
             println!("  [Stack is empty]");
             return;
         }
 
-        let mut current_address = self.stack_pointer;
+        let mut current_address = self.cpu.stack_pointer;
         let max_entries = 100u32;
         let mut displayed = 0u32;
 
@@ -27,54 +27,77 @@ impl Machine {
         }
     }
 
-    // The stack pointer is a virtual address once paging is on (a user
-    // process's stack sits at 0x7FFFF000), so the physical RAM bounds only
-    // apply while the MMU is off; with it on, bus_write/bus_load translate
-    // and raise a page fault for an unmapped page.
-    fn stack_in_bounds(&self, sp: u32) -> bool {
-        if self.mmu.enabled {
-            return true;
+    // Stack frames must live in RAM. Validate all words before committing SP,
+    // mode changes or frame writes, including page-crossing interrupt frames.
+    pub(super) fn prepare_stack_word(
+        &mut self,
+        sp: u32,
+        access: super::mmu::AccessType,
+    ) -> Result<[u32; 4], super::cpu::CpuError> {
+        if !sp.is_multiple_of(4) {
+            return Err(super::mmu::MmuFault::PageFault {
+                vaddr: sp,
+                status: access as u32,
+            }
+            .into());
         }
-        sp >= RAM_START + 4 && sp <= RAM_END_EXCLUSIVE
+        let addresses = self.prepare_word(sp, access)?;
+        if !addresses
+            .iter()
+            .all(|&p| crate::constants::is_ram_address(p))
+        {
+            return Err(super::mmu::MmuFault::PageFault {
+                vaddr: sp,
+                status: access as u32,
+            }
+            .into());
+        }
+        Ok(addresses)
     }
 
-    pub(super) fn push(&mut self, value: u32) -> Result<(), String> {
-        if !self.stack_in_bounds(self.stack_pointer) || !self.stack_pointer.is_multiple_of(4) {
-            return Err(format!(
-                "Invalid stack pointer for push: 0x{:x}",
-                self.stack_pointer
-            ));
-        }
-        self.stack_pointer = self.stack_pointer.wrapping_sub(4);
-        self.bus_write(self.stack_pointer, value);
-
-        if self.verbose {
-            let seen = self.bus_read(self.stack_pointer);
-            println!(
-                "read {} from stack at address: 0x{:x}",
-                seen, self.stack_pointer
-            );
-        }
-
+    pub(super) fn push(&mut self, value: u32) -> Result<(), super::cpu::CpuError> {
+        let sp = self
+            .cpu
+            .stack_pointer
+            .checked_sub(4)
+            .ok_or(super::mmu::MmuFault::PageFault {
+                vaddr: self.cpu.stack_pointer,
+                status: 1,
+            })?;
+        let addresses = self.prepare_stack_word(sp, super::mmu::AccessType::Write)?;
+        self.write_prepared_word(addresses, value);
+        self.cpu.stack_pointer = sp;
         Ok(())
     }
 
-    pub(super) fn pop(&mut self) -> Result<u32, String> {
-        let underflow = if self.mmu.enabled {
-            false
-        } else {
-            self.stack_pointer >= RAM_END_EXCLUSIVE
-        };
-        if underflow || !self.stack_pointer.is_multiple_of(4) {
-            return Err(format!(
-                "Stack underflow at address: 0x{:x} (STACKBASE: 0x{:x})",
-                self.stack_pointer, RAM_END_EXCLUSIVE
-            ));
-        }
-
-        let value = self.bus_load(self.stack_pointer);
-        self.stack_pointer = self.stack_pointer.wrapping_add(4);
+    pub(super) fn pop(&mut self) -> Result<u32, super::cpu::CpuError> {
+        let next_sp =
+            self.cpu
+                .stack_pointer
+                .checked_add(4)
+                .ok_or(super::mmu::MmuFault::PageFault {
+                    vaddr: self.cpu.stack_pointer,
+                    status: 0,
+                })?;
+        let addresses =
+            self.prepare_stack_word(self.cpu.stack_pointer, super::mmu::AccessType::Read)?;
+        let value = self.read_prepared_word(addresses);
+        self.cpu.stack_pointer = next_sp;
         Ok(value)
+    }
+
+    pub(super) fn pop_interrupt_frame(&mut self) -> Result<(u32, u32), super::cpu::CpuError> {
+        let sp = self.cpu.stack_pointer;
+        let next = sp.checked_add(8).ok_or(super::mmu::MmuFault::PageFault {
+            vaddr: sp,
+            status: 0,
+        })?;
+        let sr_addr = self.prepare_stack_word(sp, super::mmu::AccessType::Read)?;
+        let pc_addr = self.prepare_stack_word(sp + 4, super::mmu::AccessType::Read)?;
+        let sr = self.read_prepared_word(sr_addr);
+        let pc = self.read_prepared_word(pc_addr);
+        self.cpu.stack_pointer = next;
+        Ok((sr, pc))
     }
 }
 
@@ -88,7 +111,7 @@ mod tests {
         let mut machine = Machine::new(false, true);
 
         assert!(machine.pop().is_err());
-        assert_eq!(machine.stack_pointer, RAM_END_EXCLUSIVE);
+        assert_eq!(machine.cpu.stack_pointer, RAM_END_EXCLUSIVE);
     }
 
     #[test]
@@ -97,6 +120,6 @@ mod tests {
 
         machine.push(0xDEAD_BEEF).expect("push into an empty stack");
         assert_eq!(machine.pop().expect("pop pushed value"), 0xDEAD_BEEF);
-        assert_eq!(machine.stack_pointer, RAM_END_EXCLUSIVE);
+        assert_eq!(machine.cpu.stack_pointer, RAM_END_EXCLUSIVE);
     }
 }

@@ -2,11 +2,13 @@ cmake_minimum_required(VERSION 3.16)
 project(MyEmulatorRust LANGUAGES NONE)
 
 set(MYEMU_BIN ${CMAKE_CURRENT_SOURCE_DIR}/target/release/myemu)
+file(GLOB_RECURSE MYEMU_SOURCES CONFIGURE_DEPENDS src/*.rs)
 
 add_custom_command(
   OUTPUT ${MYEMU_BIN}
   COMMAND cargo build --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml --release
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  DEPENDS ${MYEMU_SOURCES} Cargo.toml Cargo.lock build.rs config/hardware.conf
   COMMENT "Building myemu (Rust)"
 )
 

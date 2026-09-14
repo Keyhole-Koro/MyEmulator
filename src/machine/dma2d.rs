@@ -17,8 +17,8 @@ use crate::constants::{
     DMA2D_CMD_COPY, DMA2D_CMD_COPY_BLEND, DMA2D_CMD_FILL, DMA2D_CMD_GRADIENT_H,
     DMA2D_CMD_GRADIENT_V, DMA2D_CMD_MASK_A8, DMA2D_CMD_ROUND_RECT, DMA2D_CMD_ROUND_RECT_OUTLINE,
     DMA2D_CMD_SHADOW, DMA2D_COLOR2_ADDR, DMA2D_COLOR_ADDR, DMA2D_DEST_ADDR, DMA2D_HEIGHT_ADDR,
-    DMA2D_RADIUS_ADDR, DMA2D_SPREAD_ADDR, DMA2D_SRC_ADDR, DMA2D_SRC_STRIDE_ADDR,
-    DMA2D_STRIDE_ADDR, DMA2D_WIDTH_ADDR, VRAM_BASE,
+    DMA2D_RADIUS_ADDR, DMA2D_SPREAD_ADDR, DMA2D_SRC_ADDR, DMA2D_SRC_STRIDE_ADDR, DMA2D_STRIDE_ADDR,
+    DMA2D_WIDTH_ADDR, VRAM_BASE,
 };
 
 use super::Machine;
@@ -129,7 +129,12 @@ impl Machine {
             y1 = (cy1 - dy).clamp(0, h as i64) as usize;
         }
         // Never run past the end of VRAM.
-        let rows_left = (self.vram.len().saturating_sub(origin) + stride - 1) / stride;
+        let rows_left = self
+            .display
+            .vram
+            .len()
+            .saturating_sub(origin)
+            .div_ceil(stride);
         y1 = y1.min(rows_left);
         if stride == DISPLAY_WIDTH {
             let cols_left = DISPLAY_WIDTH - (origin % stride);
@@ -157,7 +162,7 @@ impl Machine {
     fn dma2d_src_pixel(&self, addr: u32) -> u32 {
         if is_vram_address(addr) {
             let idx = (addr - VRAM_BASE) as usize / 4;
-            return *self.vram.get(idx).unwrap_or(&0);
+            return *self.display.vram.get(idx).unwrap_or(&0);
         }
         if is_ram_address(addr) {
             return self.ram_read_word(addr);
@@ -167,7 +172,7 @@ impl Machine {
 
     fn dma2d_src_byte(&self, addr: u32) -> u8 {
         if is_ram_address(addr) {
-            return *self.ram.get(addr as usize).unwrap_or(&0);
+            return self.ram.read_byte(addr);
         }
         0
     }
@@ -177,11 +182,11 @@ impl Machine {
     fn dma2d_for_each<F: FnMut(usize, usize, u32) -> u32>(&mut self, d: &Dest, mut f: F) {
         for y in d.y0..d.y1 {
             let row = d.origin + y * d.stride;
-            if row + d.x1 > self.vram.len() {
+            if row + d.x1 > self.display.vram.len() {
                 break;
             }
             for x in d.x0..d.x1 {
-                let px = &mut self.vram[row + x];
+                let px = &mut self.display.vram[row + x];
                 *px = f(x, y, *px);
             }
         }
@@ -197,8 +202,8 @@ impl Machine {
                 let c = color & 0x00FF_FFFF;
                 for y in d.y0..d.y1 {
                     let row = d.origin + y * d.stride;
-                    if row + d.x1 <= self.vram.len() {
-                        self.vram[row + d.x0..row + d.x1].fill(c);
+                    if row + d.x1 <= self.display.vram.len() {
+                        self.display.vram[row + d.x0..row + d.x1].fill(c);
                     }
                 }
             }
@@ -257,8 +262,8 @@ impl Machine {
                     for y in d.y0..d.y1 {
                         let c = lerp_color(color, color2, (y * 255 / span) as u32);
                         let row = d.origin + y * d.stride;
-                        if row + d.x1 <= self.vram.len() {
-                            self.vram[row + d.x0..row + d.x1].fill(c);
+                        if row + d.x1 <= self.display.vram.len() {
+                            self.display.vram[row + d.x0..row + d.x1].fill(c);
                         }
                     }
                 } else {
@@ -268,8 +273,8 @@ impl Machine {
                         .collect();
                     for y in d.y0..d.y1 {
                         let row = d.origin + y * d.stride;
-                        if row + d.x1 <= self.vram.len() {
-                            self.vram[row + d.x0..row + d.x1].copy_from_slice(&line);
+                        if row + d.x1 <= self.display.vram.len() {
+                            self.display.vram[row + d.x0..row + d.x1].copy_from_slice(&line);
                         }
                     }
                 }
@@ -289,7 +294,13 @@ impl Machine {
                     let mut cov = round_rect_coverage(px, py, w, h, r);
                     if outline {
                         // Ring: outer shape minus the same shape inset by t.
-                        let inner = round_rect_coverage(px - t, py - t, w - 2.0 * t, h - 2.0 * t, (r - t).max(0.0));
+                        let inner = round_rect_coverage(
+                            px - t,
+                            py - t,
+                            w - 2.0 * t,
+                            h - 2.0 * t,
+                            (r - t).max(0.0),
+                        );
                         cov = (cov - inner).max(0.0);
                     }
                     blend_pixel(dst, color, (cov * a as f32 + 0.5) as u32)
@@ -343,8 +354,9 @@ impl Machine {
                         let a = (a_max as f32 * t * t + 0.5) as u32;
                         if a > 0 {
                             let idx = row + sx as usize;
-                            if idx < self.vram.len() {
-                                self.vram[idx] = blend_pixel(self.vram[idx], color, a);
+                            if idx < self.display.vram.len() {
+                                self.display.vram[idx] =
+                                    blend_pixel(self.display.vram[idx], color, a);
                             }
                         }
                     }
