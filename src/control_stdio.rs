@@ -53,7 +53,7 @@ fn handle(machine: &mut Machine, request: Request) {
             "protocol": 2,
             "capabilities": ["dom.snapshot", "dom.hit_test", "input.pointer.sequence", "input.key.type", "input.key.press", "screen.screenshot"]
         })),
-        "os.ready" => wait_for_dom(machine).map(|_| json!({"ready": true})),
+        "os.ready" => wait_for_dom(machine).and_then(|_| quiesce(machine)).map(|_| json!({"ready": true})),
         "dom.snapshot" => dom_snapshot(machine),
         "dom.hit_test" => dom_hit_test(machine, &request.params),
         "input.pointer.sequence" => pointer_sequence(machine, &request.params),
@@ -147,6 +147,26 @@ fn screenshot(machine: &mut Machine, params: &Value) -> Result<Value, (&'static 
         .ok_or_else(|| ("invalid_params", "path must be a string".to_string(), Value::Null))?;
     machine.write_screenshot(path).map_err(|e| ("screenshot_failed", e, Value::Null))?;
     Ok(json!({"path": path}))
+}
+
+// Boot is not over when the automation service first answers: the shell
+// is still starting the desktop's apps, each a process building its window
+// over the UI protocol, and the guest only runs while a request is being
+// served. Run it on until the shell reports no app still starting (the
+// snapshot's "starting" count), so a test's first click lands on a settled
+// desktop rather than paying for the rest of the boot inside its own timeout.
+fn quiesce(machine: &mut Machine) -> Result<(), (&'static str, String, Value)> {
+    let deadline = Instant::now() + READY_TIMEOUT;
+    while Instant::now() < deadline {
+        let snapshot = dom_snapshot(machine)?;
+        let starting = snapshot.get("starting").and_then(Value::as_u64).unwrap_or(0);
+        if starting == 0 { return Ok(()); }
+        // Let the guest work between looks.
+        for _ in 0..20 {
+            machine.run_frame_budget(COMMAND_BUDGET).map_err(|e| ("machine_error", e, Value::Null))?;
+        }
+    }
+    Ok(())
 }
 
 fn settle(machine: &mut Machine) -> Result<(), (&'static str, String, Value)> {
