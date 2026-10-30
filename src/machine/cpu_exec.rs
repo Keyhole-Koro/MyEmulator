@@ -359,6 +359,19 @@ impl Machine {
             Opcode::Halt => {
                 self.cpu.halted = true;
             }
+            Opcode::Chk => {
+                // Unsigned, so a negative index fails too.
+                let value = self.get_register(inst.reg1)?;
+                if value >= (inst.imm & 0x1F_FFFF) {
+                    let at = self.cpu.program_counter.wrapping_sub(4);
+                    self.set_register(1, crate::constants::TRAP_CODE_INDEX)?;
+                    self.set_register(2, at)?;
+                    if self.is_user_mode() {
+                        return Err(MmuFault::PrivilegeViolation { vaddr: at }.into());
+                    }
+                    self.cpu.halted = true;
+                }
+            }
             Opcode::Wfi => {
                 // WFI: wait for interrupt. Only stall if interrupts are
                 // enabled; otherwise act as a NOP (matches ARM semantics).

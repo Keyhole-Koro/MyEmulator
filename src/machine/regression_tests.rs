@@ -416,3 +416,39 @@ fn geometry_registers_are_read_only_and_match_the_framebuffer() {
         m.devices.display.vram.len()
     );
 }
+
+#[test]
+fn check_passes_an_index_below_the_limit() {
+    let mut m = Machine::new(false, true);
+    m.cpu.registers[3] = 3;
+    m.execute_instruction((0x24 << 26) | (3 << 21) | 4).unwrap();
+    assert!(!m.cpu.halted);
+    assert_eq!(m.cpu.registers[1], 0);
+}
+
+#[test]
+fn check_halts_with_the_trap_code_at_or_above_the_limit() {
+    // Equal to the limit, and a negative index read as unsigned.
+    for value in [4u32, 0xFFFF_FFFF] {
+        let mut m = Machine::new(false, true);
+        m.cpu.program_counter = 0x104; // the CHK at 0x100 has been fetched
+        m.cpu.registers[3] = value;
+        m.execute_instruction((0x24 << 26) | (3 << 21) | 4).unwrap();
+        assert!(m.cpu.halted);
+        assert_eq!(m.cpu.registers[1], TRAP_CODE_INDEX);
+        assert_eq!(m.cpu.registers[2], 0x100);
+    }
+}
+
+#[test]
+fn check_failure_in_user_mode_is_a_privilege_violation() {
+    let mut m = Machine::new(false, true);
+    m.restore_status_register(SR_USER);
+    m.cpu.program_counter = 0x104;
+    m.cpu.registers[3] = 9;
+    assert!(matches!(
+        m.execute_instruction((0x24 << 26) | (3 << 21) | 4),
+        Err(cpu::CpuError::Fault(mmu::MmuFault::PrivilegeViolation { vaddr: 0x100 }))
+    ));
+    assert!(!m.cpu.halted);
+}

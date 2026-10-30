@@ -159,6 +159,12 @@ pub const IRQ_CAUSE_PRIVILEGE_VIOLATION: u32 = 1 << 6;
 pub const IRQ_CAUSE_KEYBOARD: u32 = 1 << 7;
 pub const IRQ_CAUSE_ILLEGAL_INSTRUCTION: u32 = 1 << 8;
 
+// CHK stops the program when its register is not below the limit: r1 gets
+// TRAP_CODE_INDEX and r2 the address of the CHK, then it acts as HALT (a
+// privilege violation in user mode). The compiler emits it for array
+// indexes; r1 matches its own MYLANG_TRAP_BASE | MYLANG_TRAP_INDEX.
+pub const TRAP_CODE_INDEX: u32 = 0x001B_AD01;
+
 // MMU & Virtual Memory MMIO registers
 pub const MMU_CTRL_ADDR: u32 = IO_BASE + 0x100; // R/W: Bit 0 = Paging Enable
 pub const MMU_PDBR_ADDR: u32 = IO_BASE + 0x104; // R/W: Physical Page Directory Base Register

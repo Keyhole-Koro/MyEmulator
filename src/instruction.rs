@@ -36,6 +36,7 @@ pub enum Opcode {
     Wfi = 0x21,
     Swp = 0x22,
     Cas = 0x23,
+    Chk = 0x24,
     Syscall = 0x3E,
     Halt = 0x3F,
 }
@@ -79,6 +80,7 @@ impl TryFrom<u8> for Opcode {
             0x21 => Ok(Opcode::Wfi),
             0x22 => Ok(Opcode::Swp),
             0x23 => Ok(Opcode::Cas),
+            0x24 => Ok(Opcode::Chk),
             0x3E => Ok(Opcode::Syscall),
             0x3F => Ok(Opcode::Halt),
             _ => Err(val),
@@ -114,7 +116,7 @@ pub fn add_signed(base: u32, delta: i32) -> u32 {
 
 fn imm_mask(opcode: u8) -> u32 {
     match opcode {
-        0x02 | 0x18 | 0x19 | 0x16 | 0x17 => 0x001F_FFFF,
+        0x02 | 0x18 | 0x19 | 0x16 | 0x17 | 0x24 => 0x001F_FFFF,
         0x0D | 0x0E | 0x0F | 0x10 | 0x11 | 0x12 | 0x13 | 0x1B => 0x03FF_FFFF,
         _ => 0x0000_FFFF,
     }
@@ -174,6 +176,7 @@ pub fn mnemonic(opcode: u8) -> &'static str {
         0x21 => "WFI",
         0x22 => "SWP",
         0x23 => "CAS",
+        0x24 => "CHK",
         0x3E => "SYSCALL",
         0x3F => "HALT",
         _ => "UNKNOWN",
