@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use crate::instruction::{decode_instruction, mnemonic};
+use crate::instruction::{Opcode, decode_instruction, mnemonic};
 
 use super::{DebugOptions, Machine};
 
@@ -62,6 +62,11 @@ impl Machine {
             if let Some(log) = self.execution.trace_log.as_mut() {
                 writeln!(log, "{line}").map_err(|e| e.to_string())?;
             }
+        }
+        if Opcode::try_from(inst.opcode).is_err() && self.is_user_mode() {
+            self.interrupts
+                .raise_trap(crate::constants::IRQ_CAUSE_ILLEGAL_INSTRUCTION);
+            return Ok(StepOutcome::Faulted);
         }
         self.cpu.program_counter = pc.wrapping_add(4);
         match self.execute_instruction(instruction) {

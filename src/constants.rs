@@ -157,6 +157,7 @@ pub const IRQ_CAUSE_SYSCALL: u32 = 1 << 4;
 pub const IRQ_CAUSE_PAGE_FAULT: u32 = 1 << 5;
 pub const IRQ_CAUSE_PRIVILEGE_VIOLATION: u32 = 1 << 6;
 pub const IRQ_CAUSE_KEYBOARD: u32 = 1 << 7;
+pub const IRQ_CAUSE_ILLEGAL_INSTRUCTION: u32 = 1 << 8;
 
 // MMU & Virtual Memory MMIO registers
 pub const MMU_CTRL_ADDR: u32 = IO_BASE + 0x100; // R/W: Bit 0 = Paging Enable

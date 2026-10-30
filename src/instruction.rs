@@ -34,6 +34,8 @@ pub enum Opcode {
     Di = 0x1F,
     Iret = 0x20,
     Wfi = 0x21,
+    Swp = 0x22,
+    Cas = 0x23,
     Syscall = 0x3E,
     Halt = 0x3F,
 }
@@ -75,6 +77,8 @@ impl TryFrom<u8> for Opcode {
             0x1F => Ok(Opcode::Di),
             0x20 => Ok(Opcode::Iret),
             0x21 => Ok(Opcode::Wfi),
+            0x22 => Ok(Opcode::Swp),
+            0x23 => Ok(Opcode::Cas),
             0x3E => Ok(Opcode::Syscall),
             0x3F => Ok(Opcode::Halt),
             _ => Err(val),
@@ -87,6 +91,7 @@ pub struct DecodedInstruction {
     pub opcode: u8,
     pub reg1: u8,
     pub reg2: u8,
+    pub reg3: u8,
     pub imm: u32,
     pub raw: u32,
 }
@@ -119,12 +124,14 @@ pub fn decode_instruction(machine_code: u32) -> DecodedInstruction {
     let opcode = ((machine_code >> 26) & 0x3F) as u8;
     let reg1 = ((machine_code >> 21) & 0x1F) as u8;
     let reg2 = ((machine_code >> 16) & 0x1F) as u8;
+    let reg3 = ((machine_code >> 11) & 0x1F) as u8;
     let imm = machine_code & imm_mask(opcode);
 
     DecodedInstruction {
         opcode,
         reg1,
         reg2,
+        reg3,
         imm,
         raw: machine_code,
     }
@@ -165,6 +172,8 @@ pub fn mnemonic(opcode: u8) -> &'static str {
         0x1F => "DI",
         0x20 => "IRET",
         0x21 => "WFI",
+        0x22 => "SWP",
+        0x23 => "CAS",
         0x3E => "SYSCALL",
         0x3F => "HALT",
         _ => "UNKNOWN",

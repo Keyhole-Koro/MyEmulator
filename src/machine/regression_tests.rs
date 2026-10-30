@@ -31,6 +31,72 @@ fn user_mov_to_sr_must_not_enter_kernel_mode() {
 }
 
 #[test]
+fn unknown_user_opcode_raises_illegal_instruction_trap() {
+    let mut m = Machine::new(false, true);
+    m.set_timer_interval(0);
+    m.restore_status_register(SR_USER);
+    m.bus_write_physical(0, 0);
+    assert_eq!(
+        m.step(DebugOptions::default()).unwrap(),
+        run_loop::StepOutcome::Faulted
+    );
+    assert_eq!(
+        m.interrupts.pending_trap,
+        Some(IRQ_CAUSE_ILLEGAL_INSTRUCTION)
+    );
+    assert_eq!(m.cpu.program_counter, 0);
+}
+
+#[test]
+fn atomic_swap_replaces_memory_and_returns_previous_word() {
+    let mut m = Machine::new(false, true);
+    m.cpu.registers[0] = 0x1122_3344;
+    m.cpu.registers[1] = 0x1000;
+    m.bus_write_physical(0x1000, 0xaabb_ccdd);
+    m.execute_instruction((0x22 << 26) | (0 << 21) | (1 << 16))
+        .unwrap();
+    assert_eq!(m.cpu.registers[0], 0xaabb_ccdd);
+    assert_eq!(m.bus_read_physical(0x1000), 0x1122_3344);
+}
+
+#[test]
+fn compare_exchange_writes_only_when_expected_matches() {
+    let mut m = Machine::new(false, true);
+    m.cpu.registers[0] = 7;
+    m.cpu.registers[1] = 9;
+    m.cpu.registers[2] = 0x1000;
+    m.bus_write_physical(0x1000, 7);
+    let cas = (0x23 << 26) | (0 << 21) | (1 << 16) | (2 << 11);
+    m.execute_instruction(cas).unwrap();
+    assert_eq!(m.cpu.registers[0], 7);
+    assert_eq!(m.bus_read_physical(0x1000), 9);
+
+    m.cpu.registers[0] = 4;
+    m.cpu.registers[1] = 11;
+    m.execute_instruction(cas).unwrap();
+    assert_eq!(m.cpu.registers[0], 9);
+    assert_eq!(m.bus_read_physical(0x1000), 9);
+}
+
+#[test]
+fn compare_exchange_requires_write_permission_even_on_mismatch() {
+    let mut m = paged_machine();
+    map(&mut m, 0x4000, 0x8000, PTE_VALID | PTE_USER);
+    m.restore_status_register(SR_USER);
+    m.cpu.registers[0] = 1;
+    m.cpu.registers[1] = 2;
+    m.cpu.registers[2] = 0x4000;
+    m.bus_write_physical(0x8000, 7);
+    let cas = (0x23 << 26) | (0 << 21) | (1 << 16) | (2 << 11);
+    assert!(matches!(
+        m.execute_instruction(cas),
+        Err(cpu::CpuError::Fault(mmu::MmuFault::PageFault { status: 1, .. }))
+    ));
+    assert_eq!(m.cpu.registers[0], 1);
+    assert_eq!(m.bus_read_physical(0x8000), 7);
+}
+
+#[test]
 fn warm_tlb_must_enforce_directory_user_permission() {
     let mut m = paged_machine();
     m.bus_write_physical(0x1000, 0x2000 | PTE_VALID); // kernel-only directory
@@ -157,6 +223,7 @@ fn irq_handler_entry_breakpoint_must_stop_before_handler() {
 fn every_sr_destination_is_checked_before_operand_side_effects() {
     for opcode in [
         0x01, 0x02, 0x18, 0x03, 0x1c, 0x05, 0x19, 0x06, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x15, 0x16,
+        0x22, 0x23,
     ] {
         let mut m = Machine::new(false, true);
         m.restore_status_register(SR_USER | SR_IE | SR_CARRY);

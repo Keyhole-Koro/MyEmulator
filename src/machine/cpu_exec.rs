@@ -6,7 +6,7 @@ use crate::instruction::{
 use super::Machine;
 use super::cpu::CpuError;
 use super::memory_bus::CpuBus;
-use super::mmu::MmuFault;
+use super::mmu::{AccessType, MmuFault};
 
 impl Machine {
     pub(super) fn execute_instruction(&mut self, raw_instruction: u32) -> Result<(), CpuError> {
@@ -69,6 +69,8 @@ impl Machine {
                 | Opcode::Xor
                 | Opcode::Shl
                 | Opcode::Shr
+                | Opcode::Swp
+                | Opcode::Cas
                 | Opcode::Pop
                 | Opcode::In
         ) {
@@ -120,6 +122,33 @@ impl Machine {
                 let value = self.get_register(inst.reg2)? as u8;
                 self.profile_mem_write(addr);
                 self.store_byte(addr, value)?;
+            }
+            Opcode::Swp => {
+                let addr = self.get_register(inst.reg2)?;
+                let replacement = self.get_register(inst.reg1)?;
+                let read_addresses = self.prepare_word(addr, AccessType::Read)?;
+                let write_addresses = self.prepare_word(addr, AccessType::Write)?;
+                self.profile_mem_read(addr);
+                let previous = self.read_prepared_word(read_addresses);
+                self.profile_mem_write(addr);
+                self.write_prepared_word(write_addresses, replacement);
+                self.set_register(inst.reg1, previous)?;
+                self.update_zero_flag(previous);
+            }
+            Opcode::Cas => {
+                let addr = self.get_register(inst.reg3)?;
+                let expected = self.get_register(inst.reg1)?;
+                let replacement = self.get_register(inst.reg2)?;
+                let read_addresses = self.prepare_word(addr, AccessType::Read)?;
+                let write_addresses = self.prepare_word(addr, AccessType::Write)?;
+                self.profile_mem_read(addr);
+                let previous = self.read_prepared_word(read_addresses);
+                if previous == expected {
+                    self.profile_mem_write(addr);
+                    self.write_prepared_word(write_addresses, replacement);
+                }
+                self.set_register(inst.reg1, previous)?;
+                self.update_zero_flag(previous);
             }
             Opcode::Add => {
                 let lhs = self.get_register(inst.reg1)?;
