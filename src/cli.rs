@@ -2,9 +2,10 @@ use std::env;
 
 pub struct Args {
     pub input_file: String,
-    pub output_file: String,
-    pub log_dir: String,
-    pub target_reg: String,
+    pub output_file: Option<String>,
+    pub log_dir: Option<String>,
+    // Data register index from --reg, validated while parsing.
+    pub target_reg: Option<usize>,
     pub verbose: bool,
     pub trace: bool,
     pub break_addr: Option<u32>,
@@ -24,6 +25,18 @@ pub struct Args {
     // Save the displayed frame here when the run ends (after --step, a halt,
     // or the window closing). PNG or PPM by extension.
     pub screenshot: Option<String>,
+}
+
+impl Args {
+    /// True when the user asked to inspect the run; such runs print only what
+    /// was requested, not the default end-of-run reports.
+    pub fn debug_mode(&self) -> bool {
+        self.trace
+            || self.break_addr.is_some()
+            || self.step_count.is_some()
+            || self.print_regs
+            || self.mem_range.is_some()
+    }
 }
 
 fn parse_u32_value(raw: &str, option_name: &str) -> Result<u32, String> {
@@ -46,13 +59,20 @@ fn parse_u64_value(raw: &str, option_name: &str) -> Result<u64, String> {
     }
 }
 
+fn parse_register_name(raw: &str) -> Result<usize, String> {
+    match raw.as_bytes() {
+        [b'R', digit @ b'0'..=b'7'] => Ok((digit - b'0') as usize),
+        _ => Err(format!("Invalid register name: {}", raw)),
+    }
+}
+
 pub fn parse_args() -> Result<Args, String> {
     let mut args = env::args().skip(1);
 
     let mut input_file = String::new();
-    let mut output_file = String::new();
-    let mut log_dir = String::new();
-    let mut target_reg = String::new();
+    let mut output_file = None;
+    let mut log_dir = None;
+    let mut target_reg = None;
     let mut verbose = false;
     let mut trace = false;
     let mut break_addr = None;
@@ -75,19 +95,22 @@ pub fn parse_args() -> Result<Args, String> {
                     .ok_or_else(|| "-i/--in requires a filename argument".to_string())?;
             }
             "-o" | "--out" => {
-                output_file = args
-                    .next()
-                    .ok_or_else(|| "-o/--out requires a filename argument".to_string())?;
+                output_file = Some(
+                    args.next()
+                        .ok_or_else(|| "-o/--out requires a filename argument".to_string())?,
+                );
             }
             "--log-dir" => {
-                log_dir = args
-                    .next()
-                    .ok_or_else(|| "--log-dir requires a directory argument".to_string())?;
+                log_dir = Some(
+                    args.next()
+                        .ok_or_else(|| "--log-dir requires a directory argument".to_string())?,
+                );
             }
             "--reg" => {
-                target_reg = args
+                let raw = args
                     .next()
                     .ok_or_else(|| "--reg requires a register name like R0..R7".to_string())?;
+                target_reg = Some(parse_register_name(&raw)?);
             }
             "-v" | "--verbose" => {
                 verbose = true;
@@ -187,4 +210,21 @@ pub fn parse_args() -> Result<Args, String> {
         io_stats,
         screenshot,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_register_name;
+
+    #[test]
+    fn register_names_cover_r0_to_r7_only() {
+        assert_eq!(parse_register_name("R0"), Ok(0));
+        assert_eq!(parse_register_name("R7"), Ok(7));
+        for invalid in ["", "R", "R8", "R10", "r1", "SP"] {
+            assert_eq!(
+                parse_register_name(invalid),
+                Err(format!("Invalid register name: {}", invalid))
+            );
+        }
+    }
 }

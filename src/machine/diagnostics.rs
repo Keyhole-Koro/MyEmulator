@@ -362,6 +362,30 @@ impl Machine {
         print!("{}", self.register_report_hex());
     }
 
+    pub fn register_report(&self) -> String {
+        let mut report = String::new();
+        for i in 0..=7 {
+            let value = self.cpu.registers[i];
+            report.push_str(&format!(
+                "R{}: Unsigned={}, Signed={}, Binary={:032b}\n",
+                i, value, value as i32, value
+            ));
+        }
+        report.push_str(&format!("SP: {:x}\n", self.stack_pointer()));
+        report.push_str(&format!("BP: {:x}\n", self.base_pointer()));
+        report.push_str(&format!("PC: {:x}\n", self.program_counter()));
+        report.push_str(&format!("SR: {:x}\n", self.status_register()));
+        report.push_str(&format!("LR: {:x}\n", self.link_register()));
+        report.push_str(&format!(
+            "Flags: Carry={}, Zero={}, Sign={}, Overflow={}\n",
+            self.carry_flag(),
+            self.zero_flag(),
+            self.sign_flag(),
+            self.overflow_flag()
+        ));
+        report
+    }
+
     pub fn register_report_hex(&self) -> String {
         let mut report = String::new();
         for i in 0..=7 {

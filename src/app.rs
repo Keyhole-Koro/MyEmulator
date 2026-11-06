@@ -1,19 +1,52 @@
-use crate::cli::parse_args;
+use crate::cli::{parse_args, Args};
 use crate::control_stdio;
 use crate::loader::read_binary_file;
 use crate::machine::{DebugOptions, Machine};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const LOAD_ADDRESS: u32 = 0x0000_0000;
+const MEMORY_DUMP_FILE: &str = "memory_dump.txt";
+const MEMORY_DUMP_START: u32 = 0x0000_0000;
+const MEMORY_DUMP_END: u32 = 0x0000_FFFF;
 
 pub fn run() -> Result<(), String> {
     let args = parse_args()?;
 
-    if args.control_stdio {
-        eprintln!("Loading binary from {}", args.input_file);
-    } else {
-        println!("Loading binary from {}", args.input_file);
-    }
+    status(&args, &format!("Loading binary from {}", args.input_file));
     let binary = read_binary_file(&args.input_file)?;
 
+    let mut machine = build_machine(&args)?;
+    let log_dir = prepare_log_dir(&mut machine, &args)?;
+    machine.load_program(&binary, LOAD_ADDRESS);
+    machine.set_instruction_pointer(LOAD_ADDRESS);
+
+    // MYOS-004: control-stdio mode drives the machine from JSON Lines commands
+    // on stdin instead of running it to completion, so it exits here rather
+    // than falling through to the end-of-run reporting below (that reporting
+    // describes a halted machine, which this one never becomes).
+    if args.control_stdio {
+        return control_stdio::run(&mut machine);
+    }
+
+    execute(&mut machine, &args)?;
+    write_run_outputs(&mut machine, &args)?;
+    print_diagnostics(&machine, &args);
+    write_final_state(&machine, &args, log_dir.as_deref())?;
+    write_register_report(&machine, &args)?;
+    print_target_register(&machine, &args)
+}
+
+/// Prints a startup message. In control-stdio mode stdout carries the JSON
+/// Lines protocol, so human-readable text goes to stderr instead.
+fn status(args: &Args, message: &str) {
+    if args.control_stdio {
+        eprintln!("{}", message);
+    } else {
+        println!("{}", message);
+    }
+}
+
+fn build_machine(args: &Args) -> Result<Machine, String> {
     // Control-stdio drives the guest through the automation bridge and never
     // shows a window; forcing headless keeps X11 scanout and input polling
     // off the guest's critical path (a windowed control-stdio run mapped
@@ -27,70 +60,60 @@ pub fn run() -> Result<(), String> {
     }
     if let Some(disk) = &args.disk_file {
         machine.load_disk(PathBuf::from(disk))?;
-        if args.control_stdio {
-            eprintln!("Mounted disk image {}", disk);
-        } else {
-            println!("Mounted disk image {}", disk);
-        }
+        status(args, &format!("Mounted disk image {}", disk));
     }
-    let log_dir = if args.log_dir.is_empty() {
-        None
-    } else {
-        let dir = PathBuf::from(&args.log_dir);
-        std::fs::create_dir_all(dir.join("memory"))
-            .map_err(|e| format!("Failed to create log directory {}: {}", dir.display(), e))?;
-        machine.set_serial_log(dir.join("serial.txt"))?;
-        machine.set_trace_log(dir.join("trace.log"))?;
-        Some(dir)
+    Ok(machine)
+}
+
+fn prepare_log_dir(machine: &mut Machine, args: &Args) -> Result<Option<PathBuf>, String> {
+    let Some(log_dir) = &args.log_dir else {
+        return Ok(None);
     };
+    let dir = PathBuf::from(log_dir);
+    std::fs::create_dir_all(dir.join("memory"))
+        .map_err(|e| format!("Failed to create log directory {}: {}", dir.display(), e))?;
+    machine.set_serial_log(dir.join("serial.txt"))?;
+    machine.set_trace_log(dir.join("trace.log"))?;
+    Ok(Some(dir))
+}
 
-    let start_address = 0x0000_0000;
-    machine.load_program(&binary, start_address);
-    machine.set_instruction_pointer(start_address);
-
-    // MYOS-004: control-stdio mode drives the machine from JSON Lines commands
-    // on stdin instead of running it to completion, so it exits here rather
-    // than falling through to the register-dump/report flow below (that
-    // report describes a halted machine, which this one never becomes).
-    if args.control_stdio {
-        return control_stdio::run(&mut machine);
-    }
-
+fn execute(machine: &mut Machine, args: &Args) -> Result<(), String> {
     // Enable profiling before execution so the call graph is rooted at the entry
     // point and every retired instruction is counted.
     if args.profile_out.is_some() {
-        machine.enable_profiler(start_address);
+        machine.enable_profiler(LOAD_ADDRESS);
     }
     if args.io_stats {
         machine.enable_io_stats();
     }
-    let debug_mode = args.trace
-        || args.break_addr.is_some()
-        || args.step_count.is_some()
-        || args.print_regs
-        || args.mem_range.is_some();
     machine.execute_with_debug(DebugOptions {
         trace: args.trace,
         break_addr: args.break_addr,
         step_count: args.step_count,
-    })?;
+    })
+}
 
+/// Writes the outputs requested for this run: the profile and the screenshot.
+fn write_run_outputs(machine: &mut Machine, args: &Args) -> Result<(), String> {
     if let Some(profile_path) = &args.profile_out {
         machine.write_profile(profile_path)?;
         println!("Profile written to {}", profile_path);
     }
-
     if let Some(shot) = &args.screenshot {
         machine.write_screenshot(shot)?;
         println!("Screenshot written to {}", shot);
     }
+    Ok(())
+}
 
+fn print_diagnostics(machine: &Machine, args: &Args) {
     machine.report_io_stats();
 
-    if !debug_mode {
+    if !args.debug_mode() {
         machine.display_stack();
     }
 
+    // The run loop already printed the registers where it paused.
     let already_printed_regs = args.step_count.is_some() || args.break_addr.is_some();
     if args.print_regs && !already_printed_regs {
         machine.print_registers();
@@ -99,64 +122,47 @@ pub fn run() -> Result<(), String> {
     if let Some((addr, len)) = args.mem_range {
         machine.dump_memory_range(addr, len);
     }
+}
 
-    let mut report = String::new();
-    for i in 0..=7 {
-        let unsigned_value = machine.get_data_register(i)?;
-        let signed_value = unsigned_value as i32;
-        report.push_str(&format!(
-            "R{}: Unsigned={}, Signed={}, Binary={:032b}\n",
-            i, unsigned_value, signed_value, unsigned_value
-        ));
-    }
-    report.push_str(&format!("SP: {:x}\n", machine.stack_pointer()));
-    report.push_str(&format!("BP: {:x}\n", machine.base_pointer()));
-    report.push_str(&format!("PC: {:x}\n", machine.program_counter()));
-    report.push_str(&format!("SR: {:x}\n", machine.status_register()));
-    report.push_str(&format!("LR: {:x}\n", machine.link_register()));
-    report.push_str(&format!(
-        "Flags: Carry={}, Zero={}, Sign={}, Overflow={}\n",
-        machine.carry_flag(),
-        machine.zero_flag(),
-        machine.sign_flag(),
-        machine.overflow_flag()
-    ));
-
-    if !debug_mode {
-        let dump_file = "memory_dump.txt";
-        machine.dump_memory_text(dump_file, 0x0000_0000, 0x0000_FFFF)?;
-        println!("Memory dump written to {}", dump_file);
+/// Saves the final memory image, plus the register state when logging.
+fn write_final_state(machine: &Machine, args: &Args, log_dir: Option<&Path>) -> Result<(), String> {
+    if !args.debug_mode() {
+        machine.dump_memory_text(MEMORY_DUMP_FILE, MEMORY_DUMP_START, MEMORY_DUMP_END)?;
+        println!("Memory dump written to {}", MEMORY_DUMP_FILE);
     }
 
-    if let Some(dir) = &log_dir {
+    if let Some(dir) = log_dir {
         machine.dump_memory_text(
             dir.join("memory").join("final-00000000-0000ffff.txt"),
-            0x0000_0000,
-            0x0000_FFFF,
+            MEMORY_DUMP_START,
+            MEMORY_DUMP_END,
         )?;
         std::fs::write(dir.join("registers-hex.txt"), machine.register_report_hex())
             .map_err(|e| format!("Failed to write register log in {}: {}", dir.display(), e))?;
     }
+    Ok(())
+}
 
-    if args.output_file.is_empty() && !debug_mode {
-        print!("{}", report);
-    } else if !args.output_file.is_empty() {
-        std::fs::write(&args.output_file, report)
-            .map_err(|e| format!("Failed to open output file: {} ({})", args.output_file, e))?;
-        println!("Output written to {}", args.output_file);
-    }
-
-    if !args.target_reg.is_empty() {
-        let bytes = args.target_reg.as_bytes();
-        if bytes.len() == 2 && bytes[0] == b'R' && bytes[1].is_ascii_digit() {
-            let reg_num = (bytes[1] - b'0') as usize;
-            if reg_num <= 7 {
-                println!("{}", machine.get_data_register(reg_num)?);
-                return Ok(());
-            }
+/// Sends the register report to `-o` when given. Without it the report goes to
+/// stdout, except in debug runs, which print only what was asked for.
+fn write_register_report(machine: &Machine, args: &Args) -> Result<(), String> {
+    let report = machine.register_report();
+    match &args.output_file {
+        Some(path) => {
+            std::fs::write(path, report)
+                .map_err(|e| format!("Failed to open output file: {} ({})", path, e))?;
+            println!("Output written to {}", path);
         }
-        return Err(format!("Invalid register name: {}", args.target_reg));
+        None if !args.debug_mode() => print!("{}", report),
+        None => {}
     }
+    Ok(())
+}
 
+/// Prints the `--reg` value last: test runners read it from the final line.
+fn print_target_register(machine: &Machine, args: &Args) -> Result<(), String> {
+    if let Some(register) = args.target_reg {
+        println!("{}", machine.get_data_register(register)?);
+    }
     Ok(())
 }
