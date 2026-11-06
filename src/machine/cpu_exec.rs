@@ -107,7 +107,7 @@ impl Machine {
             Opcode::St => {
                 let addr = self.get_register(inst.reg1)?;
                 let value = self.get_register(inst.reg2)?;
-                self.profile_mem_write(addr);
+                self.profile_word_write(addr, value);
                 self.store_word(addr, value)?;
             }
             Opcode::Ldb => {

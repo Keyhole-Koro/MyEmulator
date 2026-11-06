@@ -222,6 +222,7 @@ impl Machine {
                 }
                 MMU_PDBR_ADDR => {
                     self.memory.mmu.set_pdbr(value);
+                    self.profile_pdbr_written(value);
                     return;
                 }
                 KERNEL_SP_ADDR => {

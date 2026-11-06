@@ -11,6 +11,10 @@ impl Ram {
             bytes: vec![0; size],
         }
     }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.bytes
     }

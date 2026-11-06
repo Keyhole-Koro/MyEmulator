@@ -115,15 +115,25 @@ impl Machine {
 
     // Turn on instruction-level profiling. `entry_pc` seeds the call graph's
     // outermost frame so instructions retired before the first CALL are still
-    // attributed. Must be called before execution starts.
-    pub fn enable_profiler(&mut self, entry_pc: u32) {
-        self.execution.profiler = Some(Profiler::new(entry_pc));
+    // attributed. `thread_var` is the kernel word holding the current thread, for
+    // a program that has threads. Must be called before execution starts.
+    pub fn enable_profiler(&mut self, entry_pc: u32, thread_var: Option<u32>) {
+        self.execution.profiler = Some(Profiler::new(entry_pc, thread_var));
     }
 
-    // Flush the collected profile to `path` as JSON. No-op (Ok) if profiling was
-    // never enabled.
-    pub fn write_profile<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<(), String> {
+    // Forget the counts so far, so the next write covers what runs from here.
+    pub fn reset_profile(&mut self) -> bool {
         if let Some(profiler) = self.execution.profiler.as_mut() {
+            profiler.reset();
+            return true;
+        }
+        false
+    }
+
+    // Write the collected profile to `path` as JSON, leaving it running. No-op
+    // (Ok) if profiling was never enabled.
+    pub fn write_profile<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), String> {
+        if let Some(profiler) = self.execution.profiler.as_ref() {
             profiler.write_json(path)?;
         }
         Ok(())

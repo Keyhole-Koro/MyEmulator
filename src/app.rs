@@ -20,12 +20,22 @@ pub fn run() -> Result<(), String> {
     machine.load_program(&binary, LOAD_ADDRESS);
     machine.set_instruction_pointer(LOAD_ADDRESS);
 
+    // Enable profiling before execution so the call graph is rooted at the entry
+    // point and every retired instruction is counted.
+    if args.profile_out.is_some() {
+        machine.enable_profiler(LOAD_ADDRESS, args.profile_thread_var);
+    }
+
     // MYOS-004: control-stdio mode drives the machine from JSON Lines commands
     // on stdin instead of running it to completion, so it exits here rather
     // than falling through to the end-of-run reporting below (that reporting
     // describes a halted machine, which this one never becomes).
     if args.control_stdio {
-        return control_stdio::run(&mut machine);
+        control_stdio::run(&mut machine)?;
+        if let Some(profile_path) = &args.profile_out {
+            machine.write_profile(profile_path)?;
+        }
+        return Ok(());
     }
 
     execute(&mut machine, &args)?;
@@ -78,11 +88,6 @@ fn prepare_log_dir(machine: &mut Machine, args: &Args) -> Result<Option<PathBuf>
 }
 
 fn execute(machine: &mut Machine, args: &Args) -> Result<(), String> {
-    // Enable profiling before execution so the call graph is rooted at the entry
-    // point and every retired instruction is counted.
-    if args.profile_out.is_some() {
-        machine.enable_profiler(LOAD_ADDRESS);
-    }
     if args.io_stats {
         machine.enable_io_stats();
     }

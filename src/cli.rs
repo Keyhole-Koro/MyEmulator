@@ -19,6 +19,9 @@ pub struct Args {
     pub disk_file: Option<String>,
     // When set, collect an instruction-level profile and write it as JSON here.
     pub profile_out: Option<String>,
+    // The kernel word holding the current thread, so the profile keeps one call
+    // stack per thread. The name comes from the kernel's symbol map.
+    pub profile_thread_var: Option<u32>,
     pub timer_interval: Option<u64>,
     // Report wall-clock time spent in each host display/input layer at exit.
     pub io_stats: bool,
@@ -83,6 +86,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut control_stdio = false;
     let mut disk_file = None;
     let mut profile_out = None;
+    let mut profile_thread_var = None;
     let mut timer_interval = None;
     let mut io_stats = false;
     let mut screenshot = None;
@@ -169,6 +173,12 @@ pub fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--disk requires a disk image path".to_string())?,
                 );
             }
+            "--profile-thread-var" => {
+                let raw = args
+                    .next()
+                    .ok_or_else(|| "--profile-thread-var requires an address like 0x1D7E14".to_string())?;
+                profile_thread_var = Some(parse_u32_value(&raw, "--profile-thread-var")?);
+            }
             "--profile" => {
                 profile_out = Some(
                     args.next()
@@ -206,6 +216,7 @@ pub fn parse_args() -> Result<Args, String> {
         control_stdio,
         disk_file,
         profile_out,
+        profile_thread_var,
         timer_interval,
         io_stats,
         screenshot,

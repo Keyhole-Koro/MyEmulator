@@ -47,11 +47,30 @@ pub fn run(machine: &mut Machine) -> Result<(), String> {
     Ok(())
 }
 
+type MethodError = (&'static str, String, Value);
+
+fn profile_reset(machine: &mut Machine) -> Result<Value, MethodError> {
+    if !machine.reset_profile() {
+        return Err(("profile_off", "start myemu with --profile".to_string(), Value::Null));
+    }
+    Ok(json!({"reset": true}))
+}
+
+fn profile_write(machine: &Machine, params: &Value) -> Result<Value, MethodError> {
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(("invalid_params", "profile.write needs a path".to_string(), Value::Null));
+    };
+    machine
+        .write_profile(path)
+        .map_err(|message| ("profile_failed", message, Value::Null))?;
+    Ok(json!({"path": path}))
+}
+
 fn handle(machine: &mut Machine, request: Request) {
     let result = match request.method.as_str() {
         "session.hello" => Ok(json!({
             "protocol": 2,
-            "capabilities": ["dom.snapshot", "dom.hit_test", "input.pointer.sequence", "input.key.type", "input.key.press", "screen.screenshot"]
+            "capabilities": ["dom.snapshot", "dom.hit_test", "input.pointer.sequence", "input.key.type", "input.key.press", "screen.screenshot", "profile.reset", "profile.write"]
         })),
         "os.ready" => wait_for_dom(machine).and_then(|_| quiesce(machine)).map(|_| json!({"ready": true})),
         "dom.snapshot" => dom_snapshot(machine),
@@ -60,6 +79,8 @@ fn handle(machine: &mut Machine, request: Request) {
         "input.key.type" => key_type(machine, &request.params),
         "input.key.press" => key_press(machine, &request.params),
         "screen.screenshot" => screenshot(machine, &request.params),
+        "profile.reset" => profile_reset(machine),
+        "profile.write" => profile_write(machine, &request.params),
         _ => Err(("unknown_method", format!("unknown method: {}", request.method), Value::Null)),
     };
     match result {

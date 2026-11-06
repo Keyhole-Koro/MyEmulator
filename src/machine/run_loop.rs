@@ -68,6 +68,9 @@ impl Machine {
                 .raise_trap(crate::constants::IRQ_CAUSE_ILLEGAL_INSTRUCTION);
             return Ok(StepOutcome::Faulted);
         }
+        // The mode and page directory the instruction runs under, before it can
+        // change them.
+        let space = self.execution.profiler.is_some().then(|| self.profile_space());
         self.cpu.program_counter = pc.wrapping_add(4);
         match self.execute_instruction(instruction) {
             Ok(()) => {}
@@ -79,15 +82,32 @@ impl Machine {
             Err(super::cpu::CpuError::Host(message)) => return Err(self.describe_error(message)),
         }
         self.cpu.instrs_retired = self.cpu.instrs_retired.wrapping_add(1);
-        if let Some(profiler) = self.execution.profiler.as_mut() {
-            profiler.record_instruction(pc, inst.opcode);
-            if inst.opcode == 0x1b {
-                profiler.record_call(self.cpu.program_counter, self.cpu.link_register);
-            } else {
-                profiler.record_control_flow(self.cpu.program_counter);
-            }
+        if let Some(space) = space {
+            self.profile_retired(pc, space, inst.opcode);
         }
         Ok(StepOutcome::Retired)
+    }
+
+    fn profile_retired(&mut self, pc: u32, space: u32, opcode: u8) {
+        let next_pc = self.cpu.program_counter;
+        let link = self.cpu.link_register;
+        let sp = self.cpu.stack_pointer;
+        let Some(profiler) = self.execution.profiler.as_mut() else {
+            return;
+        };
+        let new_space = profiler.record_instruction(pc, space, opcode);
+        if opcode == 0x1b {
+            profiler.record_call(next_pc, space, link, sp);
+        } else if next_pc != pc.wrapping_add(4) {
+            profiler.record_jump(next_pc, sp);
+        }
+        if new_space {
+            let base = pc & !0xFFF;
+            let sample = self.profile_text_sample(base);
+            if let Some(profiler) = self.execution.profiler.as_mut() {
+                profiler.set_text_sample(space, base, sample);
+            }
+        }
     }
 
     fn note_pc(&mut self) {

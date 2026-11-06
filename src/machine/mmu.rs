@@ -116,6 +116,27 @@ impl Mmu {
         };
     }
 
+    // Where `vaddr` lives, for a tool looking at memory: no fault, no TLB fill,
+    // no accessed or dirty bits. None when the page is not mapped.
+    pub fn peek(&self, ram: &[u8], vaddr: u32) -> Option<u32> {
+        if !self.enabled {
+            return Some(vaddr);
+        }
+        let word = |at: usize| {
+            ram.get(at..at + 4)
+                .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let pde = word(self.pdbr as usize + ((vaddr >> 22) & 0x3FF) as usize * 4)?;
+        if pde & PTE_VALID == 0 {
+            return None;
+        }
+        let pte = word((pde & 0xFFFF_F000) as usize + ((vaddr >> 12) & 0x3FF) as usize * 4)?;
+        if pte & PTE_VALID == 0 {
+            return None;
+        }
+        Some((pte & 0xFFFF_F000) | (vaddr & (PAGE_SIZE - 1)))
+    }
+
     pub fn translate(
         &mut self,
         ram: &mut [u8],
