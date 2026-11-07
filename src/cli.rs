@@ -25,6 +25,8 @@ pub struct Args {
     pub timer_interval: Option<u64>,
     // Report wall-clock time spent in each host display/input layer at exit.
     pub io_stats: bool,
+    // Write the first 64 KB of RAM to memory_dump.txt when the run ends.
+    pub memory_dump: bool,
     // Save the displayed frame here when the run ends (after --step, a halt,
     // or the window closing). PNG or PPM by extension.
     pub screenshot: Option<String>,
@@ -89,6 +91,7 @@ pub fn parse_args() -> Result<Args, String> {
     let mut profile_thread_var = None;
     let mut timer_interval = None;
     let mut io_stats = false;
+    let mut memory_dump = false;
     let mut screenshot = None;
 
     while let Some(arg) = args.next() {
@@ -164,6 +167,9 @@ pub fn parse_args() -> Result<Args, String> {
                 headless = true;
                 control_stdio = true;
             }
+            "--memory-dump" => {
+                memory_dump = true;
+            }
             "--io-stats" => {
                 io_stats = true;
             }
@@ -219,6 +225,7 @@ pub fn parse_args() -> Result<Args, String> {
         profile_thread_var,
         timer_interval,
         io_stats,
+        memory_dump,
         screenshot,
     })
 }

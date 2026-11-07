@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use crate::constants::RAM_END_EXCLUSIVE;
@@ -296,13 +296,14 @@ impl Machine {
             ));
         }
 
-        let mut out = File::create(&filename).map_err(|e| {
+        let file = File::create(&filename).map_err(|e| {
             format!(
                 "Unable to open dump file {}: {}",
                 filename.as_ref().display(),
                 e
             )
         })?;
+        let mut out = BufWriter::new(file);
 
         writeln!(
             out,
@@ -326,6 +327,7 @@ impl Machine {
             }
             address = address.wrapping_add(4);
         }
+        out.flush().map_err(|e| e.to_string())?;
 
         println!("Memory dump written to {}", filename.as_ref().display());
         Ok(())

@@ -131,9 +131,8 @@ fn print_diagnostics(machine: &Machine, args: &Args) {
 
 /// Saves the final memory image, plus the register state when logging.
 fn write_final_state(machine: &Machine, args: &Args, log_dir: Option<&Path>) -> Result<(), String> {
-    if !args.debug_mode() {
+    if args.memory_dump {
         machine.dump_memory_text(MEMORY_DUMP_FILE, MEMORY_DUMP_START, MEMORY_DUMP_END)?;
-        println!("Memory dump written to {}", MEMORY_DUMP_FILE);
     }
 
     if let Some(dir) = log_dir {
