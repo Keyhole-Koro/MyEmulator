@@ -91,9 +91,12 @@ writing `CMD` runs the operation:
 | 9 | ROUND_RECT_OUTLINE | `RADIUS`, `SPREAD` (thickness) | ring inside the rectangle |
 | 10 | SHADOW | `RADIUS`, `SPREAD` (blur) | soft drop shadow around the rectangle |
 
-`CLIP_X0/Y0/X1/Y1` is a scissor applied to every command (disabled while
-`X1 <= X0`), so the guest can repaint a damaged region without reshaping
-what it draws. The datapath is `src/machine/dma2d.rs`.
+`CLIP_X0/Y0/X1/Y1` is a scissor applied to every command, so the guest can
+repaint a damaged region without reshaping what it draws. It is disabled
+while `X1 <= X0` (the reset state); enabled with `Y1 <= Y0`, it covers no
+pixel and commands write nothing. An empty clip therefore cannot be handed
+to the device: a guest whose clip is empty must not submit commands at all.
+The datapath is `src/machine/dma2d.rs`.
 
 ### Keyboard and mouse
 

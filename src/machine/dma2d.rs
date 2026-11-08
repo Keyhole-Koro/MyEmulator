@@ -99,6 +99,17 @@ impl Machine {
         *self.memory.io.get(&addr).unwrap_or(&default)
     }
 
+    // The scissor as (x0, y0, x1, y1) in display coordinates, or None while it
+    // is off. X1 <= X0 (the reset state) turns it off; an enabled scissor with
+    // Y1 <= Y0 covers no pixel, so every command then writes nothing.
+    fn dma2d_scissor(&self) -> Option<(i64, i64, i64, i64)> {
+        let x0 = self.dma2d_reg(DMA2D_CLIP_X0_ADDR, 0) as i64;
+        let y0 = self.dma2d_reg(DMA2D_CLIP_Y0_ADDR, 0) as i64;
+        let x1 = self.dma2d_reg(DMA2D_CLIP_X1_ADDR, 0) as i64;
+        let y1 = self.dma2d_reg(DMA2D_CLIP_Y1_ADDR, 0) as i64;
+        (x1 > x0).then_some((x0, y0, x1, y1))
+    }
+
     // Read the destination registers and intersect with the scissor. The
     // scissor is in display coordinates, so it is only meaningful when the
     // destination stride is the display width (the only stride the guest
@@ -116,17 +127,15 @@ impl Machine {
             return None;
         }
         let (mut x0, mut y0, mut x1, mut y1) = (0usize, 0usize, w, h);
-        let cx0 = self.dma2d_reg(DMA2D_CLIP_X0_ADDR, 0) as i64;
-        let cy0 = self.dma2d_reg(DMA2D_CLIP_Y0_ADDR, 0) as i64;
-        let cx1 = self.dma2d_reg(DMA2D_CLIP_X1_ADDR, 0) as i64;
-        let cy1 = self.dma2d_reg(DMA2D_CLIP_Y1_ADDR, 0) as i64;
-        if stride == DISPLAY_WIDTH && cx1 > cx0 && cy1 > cy0 {
-            let dx = (origin % stride) as i64;
-            let dy = (origin / stride) as i64;
-            x0 = (cx0 - dx).clamp(0, w as i64) as usize;
-            y0 = (cy0 - dy).clamp(0, h as i64) as usize;
-            x1 = (cx1 - dx).clamp(0, w as i64) as usize;
-            y1 = (cy1 - dy).clamp(0, h as i64) as usize;
+        if stride == DISPLAY_WIDTH {
+            if let Some((cx0, cy0, cx1, cy1)) = self.dma2d_scissor() {
+                let dx = (origin % stride) as i64;
+                let dy = (origin / stride) as i64;
+                x0 = (cx0 - dx).clamp(0, w as i64) as usize;
+                y0 = (cy0 - dy).clamp(0, h as i64) as usize;
+                x1 = (cx1 - dx).clamp(0, w as i64) as usize;
+                y1 = (cy1 - dy).clamp(0, h as i64) as usize;
+            }
         }
         // Never run past the end of VRAM.
         let rows_left = self
@@ -333,14 +342,11 @@ impl Machine {
                 let ex1 = (ox + d.w as i64 + spread as i64).min(DISPLAY_WIDTH as i64);
                 let ey1 = (oy + d.h as i64 + spread as i64).min(DISPLAY_HEIGHT as i64);
                 // Scissor in display coordinates, if enabled.
-                let cx0 = self.dma2d_reg(DMA2D_CLIP_X0_ADDR, 0) as i64;
-                let cy0 = self.dma2d_reg(DMA2D_CLIP_Y0_ADDR, 0) as i64;
-                let cx1 = self.dma2d_reg(DMA2D_CLIP_X1_ADDR, 0) as i64;
-                let cy1 = self.dma2d_reg(DMA2D_CLIP_Y1_ADDR, 0) as i64;
-                let (ex0, ey0, ex1, ey1) = if cx1 > cx0 && cy1 > cy0 {
-                    (ex0.max(cx0), ey0.max(cy0), ex1.min(cx1), ey1.min(cy1))
-                } else {
-                    (ex0, ey0, ex1, ey1)
+                let (ex0, ey0, ex1, ey1) = match self.dma2d_scissor() {
+                    Some((cx0, cy0, cx1, cy1)) => {
+                        (ex0.max(cx0), ey0.max(cy0), ex1.min(cx1), ey1.min(cy1))
+                    }
+                    None => (ex0, ey0, ex1, ey1),
                 };
                 if d.stride != DISPLAY_WIDTH || ex1 <= ex0 || ey1 <= ey0 {
                     return;
@@ -372,6 +378,77 @@ impl Machine {
 #[cfg(test)]
 mod tests {
     use super::{blend_pixel, lerp_color, round_rect_coverage};
+    use crate::constants::{
+        DISPLAY_WIDTH, DMA2D_CLIP_X0_ADDR, DMA2D_CLIP_X1_ADDR, DMA2D_CLIP_Y0_ADDR,
+        DMA2D_CLIP_Y1_ADDR, DMA2D_CMD_ADDR, DMA2D_CMD_FILL, DMA2D_CMD_ROUND_RECT,
+        DMA2D_CMD_SHADOW, DMA2D_COLOR_ADDR, DMA2D_DEST_ADDR, DMA2D_HEIGHT_ADDR,
+        DMA2D_RADIUS_ADDR, DMA2D_SPREAD_ADDR, DMA2D_STRIDE_ADDR, DMA2D_WIDTH_ADDR, VRAM_BASE,
+    };
+    use crate::machine::Machine;
+
+    const RED: u32 = 0x00FF_0000;
+
+    fn set_scissor(m: &mut Machine, x0: u32, y0: u32, x1: u32, y1: u32) {
+        m.bus_write_physical(DMA2D_CLIP_X0_ADDR, x0);
+        m.bus_write_physical(DMA2D_CLIP_Y0_ADDR, y0);
+        m.bus_write_physical(DMA2D_CLIP_X1_ADDR, x1);
+        m.bus_write_physical(DMA2D_CLIP_Y1_ADDR, y1);
+    }
+
+    // Run `cmd` over the w x h rectangle at (x, y) in red.
+    fn draw(m: &mut Machine, cmd: u32, x: u32, y: u32, w: u32, h: u32) {
+        m.bus_write_physical(DMA2D_DEST_ADDR, VRAM_BASE + (y * DISPLAY_WIDTH as u32 + x) * 4);
+        m.bus_write_physical(DMA2D_WIDTH_ADDR, w);
+        m.bus_write_physical(DMA2D_HEIGHT_ADDR, h);
+        m.bus_write_physical(DMA2D_STRIDE_ADDR, DISPLAY_WIDTH as u32);
+        m.bus_write_physical(DMA2D_COLOR_ADDR, RED);
+        m.bus_write_physical(DMA2D_RADIUS_ADDR, 4);
+        m.bus_write_physical(DMA2D_SPREAD_ADDR, 8);
+        m.bus_write_physical(DMA2D_CMD_ADDR, cmd);
+    }
+
+    fn pixel(m: &Machine, x: usize, y: usize) -> u32 {
+        m.devices.display.vram[y * DISPLAY_WIDTH + x]
+    }
+
+    #[test]
+    fn scissor_trims_every_write() {
+        let mut m = Machine::new(false, true);
+        set_scissor(&mut m, 20, 20, 30, 30);
+        draw(&mut m, DMA2D_CMD_FILL, 10, 10, 40, 40);
+        assert_eq!(pixel(&m, 25, 25), RED);
+        assert_eq!(pixel(&m, 19, 25), 0);
+        assert_eq!(pixel(&m, 30, 25), 0);
+        assert_eq!(pixel(&m, 25, 19), 0);
+        assert_eq!(pixel(&m, 25, 30), 0);
+    }
+
+    #[test]
+    fn scissor_is_off_while_x1_is_not_past_x0() {
+        // The reset state, and any other X1 <= X0: the whole rectangle.
+        let mut m = Machine::new(false, true);
+        draw(&mut m, DMA2D_CMD_FILL, 10, 10, 20, 20);
+        assert_eq!(pixel(&m, 10, 10), RED);
+        assert_eq!(pixel(&m, 29, 29), RED);
+        let mut m = Machine::new(false, true);
+        set_scissor(&mut m, 50, 0, 40, 100);
+        draw(&mut m, DMA2D_CMD_FILL, 10, 10, 20, 20);
+        assert_eq!(pixel(&m, 29, 29), RED);
+    }
+
+    #[test]
+    fn scissor_without_rows_writes_nothing() {
+        // Columns but no rows: an enabled scissor that covers no pixel. A
+        // window title bar clipped to a damaged area below it ends up here.
+        let mut m = Machine::new(false, true);
+        set_scissor(&mut m, 0, 40, 100, 30);
+        for cmd in [DMA2D_CMD_FILL, DMA2D_CMD_ROUND_RECT, DMA2D_CMD_SHADOW] {
+            draw(&mut m, cmd, 10, 20, 50, 30);
+        }
+        for (x, y) in [(30, 25), (30, 35), (30, 45), (5, 35)] {
+            assert_eq!(pixel(&m, x, y), 0, "pixel ({x}, {y}) was written");
+        }
+    }
 
     #[test]
     fn alpha_extremes_are_identity_and_copy() {
