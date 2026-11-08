@@ -197,6 +197,10 @@ impl Machine {
         Ok(())
     }
 
+    // The physical entry points stay out of line. Inlined into the step loop,
+    // as LLVM chose once MMIO decoding became a match, they made booting MyOS
+    // 10 to 20% slower.
+    #[inline(never)]
     pub(super) fn bus_write_physical(&mut self, address: u32, value: u32) {
         if is_ram_address(address) {
             self.ram_write_word(address, value);
@@ -290,6 +294,8 @@ impl Machine {
         }
     }
 
+    // Out of line for the same reason as bus_write_physical.
+    #[inline(never)]
     pub(super) fn bus_read_physical(&self, address: u32) -> u32 {
         if is_ram_address(address) {
             return self.ram_read_word(address);
