@@ -351,8 +351,22 @@ impl Machine {
         }
         out.flush().map_err(|e| e.to_string())?;
 
-        println!("Memory dump written to {}", filename.as_ref().display());
+        self.console_print(format_args!(
+            "Memory dump written to {}\n",
+            filename.as_ref().display()
+        ));
         Ok(())
+    }
+
+    /// Prints text meant for the person running the emulator: on stdout, or
+    /// on stderr in control-stdio mode, where stdout carries only the JSON
+    /// Lines protocol and the guest can print at any point of a request.
+    pub(super) fn console_print(&self, text: std::fmt::Arguments) {
+        if self.execution.control_stdio {
+            eprint!("{text}");
+        } else {
+            print!("{text}");
+        }
     }
 
     pub fn dump_memory_range(&self, start_address: u32, length: u32) {
@@ -383,7 +397,7 @@ impl Machine {
     }
 
     pub fn print_registers(&self) {
-        print!("{}", self.register_report_hex());
+        self.console_print(format_args!("{}", self.register_report_hex()));
     }
 
     pub fn register_report(&self) -> String {

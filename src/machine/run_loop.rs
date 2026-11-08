@@ -54,11 +54,7 @@ impl Machine {
                 inst.reg2,
                 inst.imm
             );
-            if self.execution.control_stdio {
-                eprintln!("{line}");
-            } else {
-                println!("{line}");
-            }
+            self.console_print(format_args!("{line}\n"));
             if let Some(log) = self.execution.trace_log.as_mut() {
                 writeln!(log, "{line}").map_err(|e| e.to_string())?;
             }
@@ -157,7 +153,7 @@ impl Machine {
                 break;
             }
             if options.step_count.is_some_and(|limit| attempts >= limit) {
-                println!("[STEP] paused after {retired} instruction(s)");
+                self.console_print(format_args!("[STEP] paused after {retired} instruction(s)\n"));
                 self.print_registers();
                 break;
             }
@@ -182,7 +178,9 @@ impl Machine {
             match self.step(options)? {
                 StepOutcome::Idle => {
                     if options.step_count.is_some() {
-                        println!("[STEP] CPU idle (WFI) after {retired} instruction(s)");
+                        self.console_print(format_args!(
+                            "[STEP] CPU idle (WFI) after {retired} instruction(s)\n"
+                        ));
                         self.print_registers();
                         break;
                     }
@@ -207,7 +205,10 @@ impl Machine {
                     }
                 }
                 StepOutcome::Breakpoint => {
-                    println!("[BREAK] hit 0x{:08X}", self.cpu.program_counter);
+                    self.console_print(format_args!(
+                        "[BREAK] hit 0x{:08X}\n",
+                        self.cpu.program_counter
+                    ));
                     self.print_registers();
                     break;
                 }

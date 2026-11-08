@@ -12,15 +12,15 @@ impl Machine {
         inst: &DecodedInstruction,
     ) -> Result<(), CpuError> {
         if self.execution.verbose {
-            println!(
-                "Raw: 0x{:08X} | OPC: 0x{:X} ({}) R1: 0x{:X} R2: 0x{:X} IMM: 0x{:X}",
+            self.console_print(format_args!(
+                "Raw: 0x{:08X} | OPC: 0x{:X} ({}) R1: 0x{:X} R2: 0x{:X} IMM: 0x{:X}\n",
                 inst.raw,
                 inst.opcode_bits(),
                 inst.mnemonic(),
                 inst.reg1,
                 inst.reg2,
                 inst.imm
-            );
+            ));
         }
 
         let Some(opcode) = inst.opcode else {

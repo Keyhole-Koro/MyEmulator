@@ -121,7 +121,9 @@ command accepts either format too.
 ### Control-stdio protocol
 
 `--control-stdio` is protocol v2: stdin/stdout carry only request-ID JSON
-Lines, while guest serial output goes to stderr. Start with `session.hello`,
+Lines, while guest serial output and the emulator's own messages (the DEBUG
+instruction's registers and memory dump, `--verbose` and `--trace` logs) go
+to stderr. Start with `session.hello`,
 then use `os.ready`, `dom.snapshot`, `input.pointer.sequence`,
 `input.key.type`, `input.key.press`, and `screen.screenshot` (see
 `src/control_stdio.rs`). DOM snapshots cross a dedicated automation MMIO
