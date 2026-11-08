@@ -288,36 +288,8 @@ impl Machine {
                     if value != 0 {
                         let depth = self.devices.mouse.queue_depth();
                         let waited = self.devices.mouse.pop_event();
-                        let dropped = self.devices.mouse.dropped;
                         if let Some(stats) = self.io_stats.as_mut() {
-                            stats.evt_queue_depth_sum += depth as u128;
-                            stats.evt_queue_samples += 1;
-                            if depth > stats.evt_queue_depth_max {
-                                stats.evt_queue_depth_max = depth;
-                            }
-                            stats.evt_dropped = dropped;
-                            if let Some(w) = waited {
-                                let ns = w.as_nanos();
-                                stats.evt_latency_ns += ns;
-                                stats.evt_latency_samples += 1;
-                                if ns > stats.evt_latency_max_ns {
-                                    stats.evt_latency_max_ns = ns;
-                                }
-                                stats.live_lat_ns += ns;
-                                stats.live_samples += 1;
-                                if ns > stats.live_lat_max_ns {
-                                    stats.live_lat_max_ns = ns;
-                                }
-                                let start = *stats
-                                    .live_window_start
-                                    .get_or_insert_with(std::time::Instant::now);
-                                if start.elapsed().as_secs_f64() >= 1.0 {
-                                    stats.live_window_start = Some(std::time::Instant::now());
-                                    stats.live_lat_ns = 0;
-                                    stats.live_lat_max_ns = 0;
-                                    stats.live_samples = 0;
-                                }
-                            }
+                            stats.note_mouse_pop(depth, waited, self.devices.mouse.dropped);
                         }
                     }
                     return;

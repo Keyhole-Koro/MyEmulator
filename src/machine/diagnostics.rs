@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::constants::RAM_END_EXCLUSIVE;
 
 use super::Machine;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // Wall-clock accounting for the host-side display/input path. Each field is the
 // total time spent inside one layer plus how many times it ran, so the per-call
@@ -161,6 +161,37 @@ impl IoStats {
                 "  host I/O share       {:>8.1}% of wall clock",
                 host_total as f64 / 1e9 / wall * 100.0
             );
+        }
+    }
+
+    /// Records the guest popping a mouse event: how deep the FIFO was, how
+    /// long the event waited in it, and how many events the FIFO has dropped.
+    pub fn note_mouse_pop(&mut self, depth: u32, waited: Option<Duration>, dropped: u64) {
+        self.evt_queue_depth_sum += depth as u128;
+        self.evt_queue_samples += 1;
+        if depth > self.evt_queue_depth_max {
+            self.evt_queue_depth_max = depth;
+        }
+        self.evt_dropped = dropped;
+        if let Some(w) = waited {
+            let ns = w.as_nanos();
+            self.evt_latency_ns += ns;
+            self.evt_latency_samples += 1;
+            if ns > self.evt_latency_max_ns {
+                self.evt_latency_max_ns = ns;
+            }
+            self.live_lat_ns += ns;
+            self.live_samples += 1;
+            if ns > self.live_lat_max_ns {
+                self.live_lat_max_ns = ns;
+            }
+            let start = *self.live_window_start.get_or_insert_with(Instant::now);
+            if start.elapsed().as_secs_f64() >= 1.0 {
+                self.live_window_start = Some(Instant::now());
+                self.live_lat_ns = 0;
+                self.live_lat_max_ns = 0;
+                self.live_samples = 0;
+            }
         }
     }
 }
