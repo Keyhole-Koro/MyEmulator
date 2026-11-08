@@ -165,6 +165,10 @@ impl IoStats {
     }
 }
 
+fn create_screenshot(path: &Path) -> Result<File, String> {
+    File::create(path).map_err(|e| format!("Unable to open screenshot {}: {}", path.display(), e))
+}
+
 impl Machine {
     pub(super) fn note_display_swap(&mut self) {
         let retired = self.cpu.instrs_retired;
@@ -227,14 +231,7 @@ impl Machine {
 
     pub fn write_png_screenshot<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-        let file = File::create(&path).map_err(|e| {
-            format!(
-                "Unable to open screenshot {}: {}",
-                path.as_ref().display(),
-                e
-            )
-        })?;
-        let mut out = std::io::BufWriter::new(file);
+        let mut out = std::io::BufWriter::new(create_screenshot(path.as_ref())?);
         super::png::write_png(
             &mut out,
             self.scanout_pixels(),
@@ -251,13 +248,7 @@ impl Machine {
         use crate::constants::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
         let base = self.scanout_pixels();
-        let mut out = File::create(&path).map_err(|e| {
-            format!(
-                "Unable to open screenshot {}: {}",
-                path.as_ref().display(),
-                e
-            )
-        })?;
+        let mut out = create_screenshot(path.as_ref())?;
         write!(out, "P6\n{} {}\n255\n", DISPLAY_WIDTH, DISPLAY_HEIGHT)
             .map_err(|e| e.to_string())?;
         let mut rgb = Vec::with_capacity(DISPLAY_WIDTH * DISPLAY_HEIGHT * 3);
