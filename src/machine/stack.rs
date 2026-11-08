@@ -16,7 +16,7 @@ impl Machine {
         let mut displayed = 0u32;
 
         while current_address < RAM_END_EXCLUSIVE && displayed < max_entries {
-            let value = self.read_stack_memory(current_address);
+            let value = self.bus_read_physical(current_address);
             println!("  Address: 0x{:x} | Value: 0x{:x}", current_address, value);
             current_address += 4;
             displayed += 1;

@@ -420,8 +420,4 @@ impl Machine {
     pub(super) fn ram_write_word(&mut self, address: u32, value: u32) {
         self.memory.ram.write_word(address, value);
     }
-
-    pub(super) fn read_stack_memory(&self, address: u32) -> u32 {
-        self.bus_read_physical(address)
-    }
 }
