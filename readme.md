@@ -39,7 +39,7 @@ Each run writes a session directory with:
 - `manifest.json` for commands, exit codes, sources, and artifact paths.
 - `combined.log` plus per-step logs under `steps/`.
 - generated binaries and intermediate files under `artifacts/`.
-- emulator outputs such as `registers.txt`, `serial.txt`, `trace.log`, and `memory/final-00000000-0000ffff.txt` when the emulator binary supports `--log-dir`.
+- emulator outputs such as `registers.txt`, `serial.txt`, `trace.log`, and `memory/final-00000000-0000ffff.txt`: the runners pass the session directory to the emulator as `--log-dir`.
 
 Run the bundled MyLang serial-debug sample:
 
