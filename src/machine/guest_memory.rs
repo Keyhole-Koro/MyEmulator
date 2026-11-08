@@ -1,7 +1,7 @@
 //! Guest-addressable backing storage and address-translation state.
 use std::collections::HashMap;
 
-use crate::constants::{RAM_SIZE, ROM_SIZE};
+use crate::constants::{AUTOMATION_STATUS_DONE, AUTOMATION_STATUS_REQUEST, RAM_SIZE, ROM_SIZE};
 
 use super::{mmu::Mmu, ram::Ram};
 
@@ -21,6 +21,20 @@ pub(super) struct AutomationBridge {
     pub request: Option<u32>,
     pub tx_buf: Vec<u8>,
     pub done: bool,
+}
+
+impl AutomationBridge {
+    /// The STATUS register: a request is waiting, the response is complete.
+    pub fn status(&self) -> u32 {
+        let mut status = 0;
+        if self.request.is_some() {
+            status |= AUTOMATION_STATUS_REQUEST;
+        }
+        if self.done {
+            status |= AUTOMATION_STATUS_DONE;
+        }
+        status
+    }
 }
 
 impl GuestMemory {

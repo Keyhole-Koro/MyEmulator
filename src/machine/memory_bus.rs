@@ -1,10 +1,14 @@
 use std::io::{self, Write};
 
 use crate::constants::{
-    AUTOMATION_DONE_ADDR, AUTOMATION_RX_ADDR, AUTOMATION_STATUS_ADDR, AUTOMATION_STATUS_DONE,
-    AUTOMATION_STATUS_REQUEST, AUTOMATION_TX_ADDR, IRQ_CAUSE_ADDR, IRQ_CAUSE_PAGE_FAULT,
-    IRQ_CAUSE_PRIVILEGE_VIOLATION, KERNEL_SP_ADDR, MMU_CTRL_ADDR, MMU_FAULT_ADDR,
-    MMU_FAULT_STATUS_ADDR, MMU_PDBR_ADDR, SERIAL_LSR_ADDR, SERIAL_RX_ADDR, SERIAL_TX_ADDR,
+    AUTOMATION_DONE_ADDR, AUTOMATION_RX_ADDR, AUTOMATION_STATUS_ADDR, AUTOMATION_TX_ADDR,
+    CURSOR_CTRL_ADDR, CURSOR_X_ADDR, CURSOR_Y_ADDR, DISPLAY_HEIGHT, DISPLAY_HEIGHT_ADDR,
+    DISPLAY_SWAP_ADDR, DISPLAY_WIDTH, DISPLAY_WIDTH_ADDR, DMA2D_CMD_ADDR, IRQ_CAUSE_ADDR,
+    IRQ_CAUSE_PAGE_FAULT, IRQ_CAUSE_PRIVILEGE_VIOLATION, KBD_EVT_CODE_ADDR, KBD_EVT_MODS_ADDR,
+    KBD_EVT_POP_ADDR, KBD_EVT_STATUS_ADDR, KBD_EVT_TYPE_ADDR, KERNEL_SP_ADDR, MMU_CTRL_ADDR,
+    MMU_FAULT_ADDR, MMU_FAULT_STATUS_ADDR, MMU_PDBR_ADDR, MOUSE_BUTTONS_ADDR, MOUSE_EVT_BTN_ADDR,
+    MOUSE_EVT_POP_ADDR, MOUSE_EVT_STATUS_ADDR, MOUSE_EVT_WHEEL_ADDR, MOUSE_EVT_X_ADDR,
+    MOUSE_EVT_Y_ADDR, MOUSE_X_ADDR, MOUSE_Y_ADDR, SERIAL_LSR_ADDR, SERIAL_RX_ADDR, SERIAL_TX_ADDR,
     SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR, VRAM_BASE, is_io_address,
     is_ram_address, is_vram_address,
 };
@@ -212,92 +216,57 @@ impl Machine {
         }
 
         if is_io_address(address) {
-            match address {
-                crate::constants::DISPLAY_WIDTH_ADDR | crate::constants::DISPLAY_HEIGHT_ADDR => {
-                    return;
-                }
-                MMU_CTRL_ADDR => {
-                    self.memory.mmu.set_enabled(value & 1 != 0);
-                    return;
-                }
-                MMU_PDBR_ADDR => {
-                    self.memory.mmu.set_pdbr(value);
-                    self.profile_pdbr_written(value);
-                    return;
-                }
-                KERNEL_SP_ADDR => {
-                    self.memory.mmu.kernel_sp = value;
-                    return;
-                }
-                AUTOMATION_TX_ADDR => {
-                    self.memory.automation.tx_buf.push((value & 0xFF) as u8);
-                    return;
-                }
-                AUTOMATION_DONE_ADDR => {
-                    if value != 0 {
-                        self.memory.automation.done = true;
-                    }
-                    return;
-                }
-                SSD_BLOCK_ADDR => {
-                    self.devices.ssd.set_block(value);
-                    return;
-                }
-                SSD_ADDR_ADDR => {
-                    self.devices.ssd.set_addr(value);
-                    return;
-                }
-                SSD_CMD_ADDR => {
-                    self.service_ssd_dma(value);
-                    return;
-                }
-                crate::constants::DMA2D_CMD_ADDR => {
-                    self.service_dma2d(value);
-                    return;
-                }
-                crate::constants::CURSOR_X_ADDR => {
-                    self.devices.display.cursor_x = value;
-                    return;
-                }
-                crate::constants::CURSOR_Y_ADDR => {
-                    self.devices.display.cursor_y = value;
-                    return;
-                }
-                crate::constants::CURSOR_CTRL_ADDR => {
-                    self.devices.display.cursor_visible = value & 1 != 0;
-                    return;
-                }
-                crate::constants::DISPLAY_SWAP_ADDR => {
-                    if value != 0 {
-                        self.devices.display.swap();
-                        self.note_display_swap();
-                    }
-                    return;
-                }
-                IRQ_CAUSE_ADDR => {
-                    self.interrupts.acknowledge(value); // W1C acknowledgement.
-                    return;
-                }
-                crate::constants::KBD_EVT_POP_ADDR => {
-                    if value != 0 {
-                        self.devices.keyboard.pop();
-                    }
-                    return;
-                }
-                crate::constants::MOUSE_EVT_POP_ADDR => {
-                    if value != 0 {
-                        let depth = self.devices.mouse.queue_depth();
-                        let waited = self.devices.mouse.pop_event();
-                        if let Some(stats) = self.io_stats.as_mut() {
-                            stats.note_mouse_pop(depth, waited, self.devices.mouse.dropped);
-                        }
-                    }
-                    return;
-                }
-                _ => {}
+            self.mmio_write(address, value);
+        }
+    }
+
+    // A register with side effects acts on the write; any other register just
+    // keeps the value for a later read.
+    fn mmio_write(&mut self, address: u32, value: u32) {
+        match address {
+            DISPLAY_WIDTH_ADDR | DISPLAY_HEIGHT_ADDR => {}
+            MMU_CTRL_ADDR => self.memory.mmu.set_enabled(value & 1 != 0),
+            MMU_PDBR_ADDR => {
+                self.memory.mmu.set_pdbr(value);
+                self.profile_pdbr_written(value);
             }
-            self.memory.io.insert(address, value);
-            if address == SERIAL_TX_ADDR {
+            KERNEL_SP_ADDR => self.memory.mmu.kernel_sp = value,
+            AUTOMATION_TX_ADDR => self.memory.automation.tx_buf.push((value & 0xFF) as u8),
+            AUTOMATION_DONE_ADDR => {
+                if value != 0 {
+                    self.memory.automation.done = true;
+                }
+            }
+            SSD_BLOCK_ADDR => self.devices.ssd.set_block(value),
+            SSD_ADDR_ADDR => self.devices.ssd.set_addr(value),
+            SSD_CMD_ADDR => self.service_ssd_dma(value),
+            DMA2D_CMD_ADDR => self.service_dma2d(value),
+            CURSOR_X_ADDR => self.devices.display.cursor_x = value,
+            CURSOR_Y_ADDR => self.devices.display.cursor_y = value,
+            CURSOR_CTRL_ADDR => self.devices.display.cursor_visible = value & 1 != 0,
+            DISPLAY_SWAP_ADDR => {
+                if value != 0 {
+                    self.devices.display.swap();
+                    self.note_display_swap();
+                }
+            }
+            IRQ_CAUSE_ADDR => self.interrupts.acknowledge(value), // W1C acknowledgement.
+            KBD_EVT_POP_ADDR => {
+                if value != 0 {
+                    self.devices.keyboard.pop();
+                }
+            }
+            MOUSE_EVT_POP_ADDR => {
+                if value != 0 {
+                    let depth = self.devices.mouse.queue_depth();
+                    let waited = self.devices.mouse.pop_event();
+                    if let Some(stats) = self.io_stats.as_mut() {
+                        stats.note_mouse_pop(depth, waited, self.devices.mouse.dropped);
+                    }
+                }
+            }
+            SERIAL_TX_ADDR => {
+                self.memory.io.insert(address, value);
                 let ch = (value & 0xFF) as u8;
                 if self.execution.control_stdio {
                     eprint!("{}", char::from(ch));
@@ -313,6 +282,9 @@ impl Machine {
                 } else {
                     let _ = io::stdout().flush();
                 }
+            }
+            _ => {
+                self.memory.io.insert(address, value);
             }
         }
     }
@@ -340,94 +312,43 @@ impl Machine {
         }
 
         if is_io_address(address) {
-            if address == MMU_CTRL_ADDR {
-                return if self.memory.mmu.enabled { 1 } else { 0 };
-            }
-            if address == crate::constants::DISPLAY_WIDTH_ADDR {
-                return crate::constants::DISPLAY_WIDTH as u32;
-            }
-            if address == crate::constants::DISPLAY_HEIGHT_ADDR {
-                return crate::constants::DISPLAY_HEIGHT as u32;
-            }
-            if address == MMU_PDBR_ADDR {
-                return self.memory.mmu.pdbr;
-            }
-            if address == MMU_FAULT_ADDR {
-                return self.memory.mmu.fault_addr;
-            }
-            if address == MMU_FAULT_STATUS_ADDR {
-                return self.memory.mmu.fault_status;
-            }
-            if address == KERNEL_SP_ADDR {
-                return self.memory.mmu.kernel_sp;
-            }
-
-            if address == AUTOMATION_STATUS_ADDR {
-                let mut status = 0;
-                if self.memory.automation.request.is_some() {
-                    status |= AUTOMATION_STATUS_REQUEST;
-                }
-                if self.memory.automation.done {
-                    status |= AUTOMATION_STATUS_DONE;
-                }
-                return status;
-            }
-            if address == AUTOMATION_RX_ADDR {
-                return self.memory.automation.request.unwrap_or(0);
-            }
-
-            if address == SSD_STATUS_ADDR {
-                return self.devices.ssd.status();
-            }
-            if address == IRQ_CAUSE_ADDR {
-                return self.interrupts.cause;
-            }
-            if address == crate::constants::MOUSE_X_ADDR {
-                return self.devices.mouse.x;
-            }
-            if address == crate::constants::MOUSE_Y_ADDR {
-                return self.devices.mouse.y;
-            }
-            if address == crate::constants::MOUSE_BUTTONS_ADDR {
-                return self.devices.mouse.buttons;
-            }
-            if address == crate::constants::MOUSE_EVT_STATUS_ADDR {
-                return self.devices.mouse.event_count();
-            }
-            if address == crate::constants::MOUSE_EVT_X_ADDR {
-                return self.devices.mouse.head_event().x;
-            }
-            if address == crate::constants::MOUSE_EVT_Y_ADDR {
-                return self.devices.mouse.head_event().y;
-            }
-            if address == crate::constants::MOUSE_EVT_BTN_ADDR {
-                return self.devices.mouse.head_event().buttons;
-            }
-            if address == crate::constants::MOUSE_EVT_WHEEL_ADDR {
-                return self.devices.mouse.head_event().wheel as u32;
-            }
-            if address == crate::constants::KBD_EVT_STATUS_ADDR {
-                return self.devices.keyboard.event_count();
-            }
-            if address == crate::constants::KBD_EVT_TYPE_ADDR {
-                return self.devices.keyboard.head().kind;
-            }
-            if address == crate::constants::KBD_EVT_CODE_ADDR {
-                return self.devices.keyboard.head().code;
-            }
-            if address == crate::constants::KBD_EVT_MODS_ADDR {
-                return self.devices.keyboard.head().mods;
-            }
-            if address == SERIAL_LSR_ADDR {
-                return self.devices.serial.lsr();
-            }
-            if address == SERIAL_RX_ADDR {
-                return self.devices.serial.peek_rx();
-            }
-            return *self.memory.io.get(&address).unwrap_or(&0xFFFF_FFFF);
+            return self.mmio_read(address);
         }
 
         0xFFFF_FFFF
+    }
+
+    // Peeks a register: reads that consume (serial and automation RX) are
+    // handled by the CPU load paths before they get here.
+    fn mmio_read(&self, address: u32) -> u32 {
+        match address {
+            MMU_CTRL_ADDR => u32::from(self.memory.mmu.enabled),
+            DISPLAY_WIDTH_ADDR => DISPLAY_WIDTH as u32,
+            DISPLAY_HEIGHT_ADDR => DISPLAY_HEIGHT as u32,
+            MMU_PDBR_ADDR => self.memory.mmu.pdbr,
+            MMU_FAULT_ADDR => self.memory.mmu.fault_addr,
+            MMU_FAULT_STATUS_ADDR => self.memory.mmu.fault_status,
+            KERNEL_SP_ADDR => self.memory.mmu.kernel_sp,
+            AUTOMATION_STATUS_ADDR => self.memory.automation.status(),
+            AUTOMATION_RX_ADDR => self.memory.automation.request.unwrap_or(0),
+            SSD_STATUS_ADDR => self.devices.ssd.status(),
+            IRQ_CAUSE_ADDR => self.interrupts.cause,
+            MOUSE_X_ADDR => self.devices.mouse.x,
+            MOUSE_Y_ADDR => self.devices.mouse.y,
+            MOUSE_BUTTONS_ADDR => self.devices.mouse.buttons,
+            MOUSE_EVT_STATUS_ADDR => self.devices.mouse.event_count(),
+            MOUSE_EVT_X_ADDR => self.devices.mouse.head_event().x,
+            MOUSE_EVT_Y_ADDR => self.devices.mouse.head_event().y,
+            MOUSE_EVT_BTN_ADDR => self.devices.mouse.head_event().buttons,
+            MOUSE_EVT_WHEEL_ADDR => self.devices.mouse.head_event().wheel as u32,
+            KBD_EVT_STATUS_ADDR => self.devices.keyboard.event_count(),
+            KBD_EVT_TYPE_ADDR => self.devices.keyboard.head().kind,
+            KBD_EVT_CODE_ADDR => self.devices.keyboard.head().code,
+            KBD_EVT_MODS_ADDR => self.devices.keyboard.head().mods,
+            SERIAL_LSR_ADDR => self.devices.serial.lsr(),
+            SERIAL_RX_ADDR => self.devices.serial.peek_rx(),
+            _ => *self.memory.io.get(&address).unwrap_or(&0xFFFF_FFFF),
+        }
     }
 
     pub(super) fn bus_write_byte_physical(&mut self, address: u32, value: u8) {
@@ -496,21 +417,11 @@ impl Machine {
         }
 
         if is_io_address(address) {
-            let value = if address == AUTOMATION_STATUS_ADDR {
-                let mut status = 0;
-                if self.memory.automation.request.is_some() {
-                    status |= AUTOMATION_STATUS_REQUEST;
-                }
-                if self.memory.automation.done {
-                    status |= AUTOMATION_STATUS_DONE;
-                }
-                status
-            } else if address == AUTOMATION_RX_ADDR {
-                self.memory.automation.request.unwrap_or(0)
-            } else if address == SERIAL_LSR_ADDR {
-                self.devices.serial.lsr()
-            } else {
-                *self.memory.io.get(&address).unwrap_or(&0xFFFF_FFFF)
+            let value = match address {
+                AUTOMATION_STATUS_ADDR => self.memory.automation.status(),
+                AUTOMATION_RX_ADDR => self.memory.automation.request.unwrap_or(0),
+                SERIAL_LSR_ADDR => self.devices.serial.lsr(),
+                _ => *self.memory.io.get(&address).unwrap_or(&0xFFFF_FFFF),
             };
             return (value & 0xFF) as u8;
         }
