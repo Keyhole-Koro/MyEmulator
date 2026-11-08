@@ -478,3 +478,21 @@ fn debug_dumps_the_top_of_ram_where_the_stack_starts() {
     assert_eq!(lines[2], "0x1ffff000: 0x11223344");
     assert_eq!(lines[lines.len() - 1], "0x1ffffffc: 0xaabbccdd");
 }
+
+#[test]
+fn byte_and_word_stores_reach_the_uart_and_automation_tx_alike() {
+    let mut m = Machine::new(false, true);
+    let path = std::env::temp_dir().join(format!(
+        "myemu-serial-regression-{}.txt",
+        std::process::id()
+    ));
+    m.set_serial_log(&path).unwrap();
+    m.bus_write_byte(SERIAL_TX_ADDR, b'o').unwrap();
+    m.bus_write(SERIAL_TX_ADDR, u32::from(b'k')).unwrap();
+    m.bus_write_byte(AUTOMATION_TX_ADDR, b'!').unwrap();
+    m.bus_write(AUTOMATION_TX_ADDR, u32::from(b'?')).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"ok");
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(m.take_automation_response(), b"!?");
+    assert_eq!(m.bus_load_byte(SERIAL_TX_ADDR).unwrap(), b'k');
+}

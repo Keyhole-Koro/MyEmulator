@@ -193,11 +193,7 @@ impl Machine {
 
     pub(super) fn bus_write_byte(&mut self, address: u32, value: u8) -> Result<(), MmuFault> {
         let p = self.prepare_byte(address, AccessType::Write)?;
-        if is_io_address(p) {
-            self.bus_write_physical(p, value as u32);
-        } else {
-            self.bus_write_byte_physical(p, value);
-        }
+        self.bus_write_byte_physical(p, value);
         Ok(())
     }
 
@@ -267,25 +263,30 @@ impl Machine {
             }
             SERIAL_TX_ADDR => {
                 self.memory.io.insert(address, value);
-                let ch = (value & 0xFF) as u8;
-                if self.execution.control_stdio {
-                    eprint!("{}", char::from(ch));
-                } else {
-                    print!("{}", char::from(ch));
-                }
-                if let Some(serial_log) = self.serial_log.as_mut() {
-                    let _ = serial_log.write_all(&[ch]);
-                    let _ = serial_log.flush();
-                }
-                if self.execution.control_stdio {
-                    let _ = io::stderr().flush();
-                } else {
-                    let _ = io::stdout().flush();
-                }
+                self.serial_tx((value & 0xFF) as u8);
             }
             _ => {
                 self.memory.io.insert(address, value);
             }
+        }
+    }
+
+    // The UART's console is stdout, or stderr while stdout carries the
+    // control-stdio protocol. Each byte is flushed as it is sent.
+    fn serial_tx(&mut self, byte: u8) {
+        if self.execution.control_stdio {
+            eprint!("{}", char::from(byte));
+        } else {
+            print!("{}", char::from(byte));
+        }
+        if let Some(serial_log) = self.serial_log.as_mut() {
+            let _ = serial_log.write_all(&[byte]);
+            let _ = serial_log.flush();
+        }
+        if self.execution.control_stdio {
+            let _ = io::stderr().flush();
+        } else {
+            let _ = io::stdout().flush();
         }
     }
 
@@ -370,26 +371,9 @@ impl Machine {
             return;
         }
 
+        // A register takes the byte as a zero-extended word.
         if is_io_address(address) {
-            self.memory.io.insert(address, value as u32);
-            if address == SERIAL_TX_ADDR {
-                if self.execution.control_stdio {
-                    eprint!("{}", char::from(value));
-                } else {
-                    print!("{}", char::from(value));
-                }
-                if let Some(serial_log) = self.serial_log.as_mut() {
-                    let _ = serial_log.write_all(&[value]);
-                    let _ = serial_log.flush();
-                }
-                if value == b'\n' {
-                    if self.execution.control_stdio {
-                        let _ = io::stderr().flush();
-                    } else {
-                        let _ = io::stdout().flush();
-                    }
-                }
-            }
+            self.mmio_write(address, value as u32);
         }
     }
 
