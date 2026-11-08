@@ -1,7 +1,5 @@
 use crate::constants::IO_BASE;
-use crate::instruction::{
-    Opcode, add_signed, decode_instruction, mnemonic, sign_extend_21, sign_extend_26,
-};
+use crate::instruction::{DecodedInstruction, Opcode, add_signed, sign_extend_21, sign_extend_26};
 
 use super::Machine;
 use super::cpu::CpuError;
@@ -9,25 +7,26 @@ use super::memory_bus::CpuBus;
 use super::mmu::{AccessType, MmuFault};
 
 impl Machine {
-    pub(super) fn execute_instruction(&mut self, raw_instruction: u32) -> Result<(), CpuError> {
-        let inst = decode_instruction(raw_instruction);
-
+    pub(super) fn execute_instruction(
+        &mut self,
+        inst: &DecodedInstruction,
+    ) -> Result<(), CpuError> {
         if self.execution.verbose {
             println!(
                 "Raw: 0x{:08X} | OPC: 0x{:X} ({}) R1: 0x{:X} R2: 0x{:X} IMM: 0x{:X}",
                 inst.raw,
-                inst.opcode,
-                mnemonic(inst.opcode),
+                inst.opcode_bits(),
+                inst.mnemonic(),
                 inst.reg1,
                 inst.reg2,
                 inst.imm
             );
         }
 
-        let Ok(opcode) = Opcode::try_from(inst.opcode) else {
+        let Some(opcode) = inst.opcode else {
             return Err(format!(
                 "Unknown opcode: 0x{:X} at pc=0x{:08X} (sp=0x{:08X}, lr=0x{:08X})",
-                inst.opcode,
+                inst.opcode_bits(),
                 self.cpu.program_counter.wrapping_sub(4),
                 self.cpu.stack_pointer,
                 self.cpu.link_register

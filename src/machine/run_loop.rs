@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use crate::instruction::{Opcode, decode_instruction, mnemonic};
+use crate::instruction::{Opcode, decode_instruction};
 
 use super::{DebugOptions, Machine};
 
@@ -49,7 +49,7 @@ impl Machine {
                 "PC: 0x{:08X}, Instruction: 0x{:08X}, {} r1=0x{:X} r2=0x{:X} imm=0x{:X}",
                 pc,
                 instruction,
-                mnemonic(inst.opcode),
+                inst.mnemonic(),
                 inst.reg1,
                 inst.reg2,
                 inst.imm
@@ -63,7 +63,7 @@ impl Machine {
                 writeln!(log, "{line}").map_err(|e| e.to_string())?;
             }
         }
-        if Opcode::try_from(inst.opcode).is_err() && self.is_user_mode() {
+        if inst.opcode.is_none() && self.is_user_mode() {
             self.interrupts
                 .raise_trap(crate::constants::IRQ_CAUSE_ILLEGAL_INSTRUCTION);
             return Ok(StepOutcome::Faulted);
@@ -72,7 +72,7 @@ impl Machine {
         // change them.
         let space = self.execution.profiler.is_some().then(|| self.profile_space());
         self.cpu.program_counter = pc.wrapping_add(4);
-        match self.execute_instruction(instruction) {
+        match self.execute_instruction(&inst) {
             Ok(()) => {}
             Err(super::cpu::CpuError::Fault(fault)) => {
                 self.cpu.program_counter = pc;
@@ -83,7 +83,7 @@ impl Machine {
         }
         self.cpu.instrs_retired = self.cpu.instrs_retired.wrapping_add(1);
         if let Some(space) = space {
-            self.profile_retired(pc, space, inst.opcode);
+            self.profile_retired(pc, space, inst.opcode_bits());
         }
         Ok(StepOutcome::Retired)
     }
@@ -96,7 +96,7 @@ impl Machine {
             return;
         };
         let new_space = profiler.record_instruction(pc, space, opcode);
-        if opcode == 0x1b {
+        if opcode == Opcode::Call as u8 {
             profiler.record_call(next_pc, space, link, sp);
         } else if next_pc != pc.wrapping_add(4) {
             profiler.record_jump(next_pc, sp);

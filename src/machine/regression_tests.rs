@@ -1,5 +1,6 @@
 use super::*;
 use crate::constants::*;
+use crate::instruction::decode_instruction;
 use crate::machine::mmu::AccessType;
 
 fn paged_machine() -> Machine {
@@ -22,7 +23,7 @@ fn user_mov_to_sr_must_not_enter_kernel_mode() {
     m.restore_status_register(SR_USER | SR_IE);
     m.cpu.registers[0] = 0;
     assert!(matches!(
-        m.execute_instruction((0x01 << 26) | (0x0b << 21)),
+        m.execute_instruction(&decode_instruction((0x01 << 26) | (0x0b << 21))),
         Err(cpu::CpuError::Fault(
             mmu::MmuFault::PrivilegeViolation { .. }
         ))
@@ -53,7 +54,7 @@ fn atomic_swap_replaces_memory_and_returns_previous_word() {
     m.cpu.registers[0] = 0x1122_3344;
     m.cpu.registers[1] = 0x1000;
     m.bus_write_physical(0x1000, 0xaabb_ccdd);
-    m.execute_instruction((0x22 << 26) | (0 << 21) | (1 << 16))
+    m.execute_instruction(&decode_instruction((0x22 << 26) | (0 << 21) | (1 << 16)))
         .unwrap();
     assert_eq!(m.cpu.registers[0], 0xaabb_ccdd);
     assert_eq!(m.bus_read_physical(0x1000), 0x1122_3344);
@@ -67,13 +68,13 @@ fn compare_exchange_writes_only_when_expected_matches() {
     m.cpu.registers[2] = 0x1000;
     m.bus_write_physical(0x1000, 7);
     let cas = (0x23 << 26) | (0 << 21) | (1 << 16) | (2 << 11);
-    m.execute_instruction(cas).unwrap();
+    m.execute_instruction(&decode_instruction(cas)).unwrap();
     assert_eq!(m.cpu.registers[0], 7);
     assert_eq!(m.bus_read_physical(0x1000), 9);
 
     m.cpu.registers[0] = 4;
     m.cpu.registers[1] = 11;
-    m.execute_instruction(cas).unwrap();
+    m.execute_instruction(&decode_instruction(cas)).unwrap();
     assert_eq!(m.cpu.registers[0], 9);
     assert_eq!(m.bus_read_physical(0x1000), 9);
 }
@@ -89,7 +90,7 @@ fn compare_exchange_requires_write_permission_even_on_mismatch() {
     m.bus_write_physical(0x8000, 7);
     let cas = (0x23 << 26) | (0 << 21) | (1 << 16) | (2 << 11);
     assert!(matches!(
-        m.execute_instruction(cas),
+        m.execute_instruction(&decode_instruction(cas)),
         Err(cpu::CpuError::Fault(mmu::MmuFault::PageFault { status: 1, .. }))
     ));
     assert_eq!(m.cpu.registers[0], 1);
@@ -232,7 +233,7 @@ fn every_sr_destination_is_checked_before_operand_side_effects() {
         m.ingest_serial_bytes(b"x");
         let sp = m.cpu.stack_pointer;
         let sr = m.status_register();
-        let result = m.execute_instruction((opcode << 26) | (0x0b << 21));
+        let result = m.execute_instruction(&decode_instruction((opcode << 26) | (0x0b << 21)));
         assert!(matches!(
             result,
             Err(cpu::CpuError::Fault(mmu::MmuFault::PrivilegeViolation {
@@ -334,7 +335,7 @@ fn faults_in_push_pop_and_iret_preserve_stack_state() {
         m.bus_write_physical(0x8ffc, SR_USER);
         let before = m.cpu.clone();
         assert!(matches!(
-            m.execute_instruction(opcode << 26),
+            m.execute_instruction(&decode_instruction(opcode << 26)),
             Err(cpu::CpuError::Fault(_))
         ));
         assert_eq!(m.cpu.stack_pointer, before.stack_pointer);
@@ -421,7 +422,8 @@ fn geometry_registers_are_read_only_and_match_the_framebuffer() {
 fn check_passes_an_index_below_the_limit() {
     let mut m = Machine::new(false, true);
     m.cpu.registers[3] = 3;
-    m.execute_instruction((0x24 << 26) | (3 << 21) | 4).unwrap();
+    m.execute_instruction(&decode_instruction((0x24 << 26) | (3 << 21) | 4))
+        .unwrap();
     assert!(!m.cpu.halted);
     assert_eq!(m.cpu.registers[1], 0);
 }
@@ -433,7 +435,8 @@ fn check_halts_with_the_trap_code_at_or_above_the_limit() {
         let mut m = Machine::new(false, true);
         m.cpu.program_counter = 0x104; // the CHK at 0x100 has been fetched
         m.cpu.registers[3] = value;
-        m.execute_instruction((0x24 << 26) | (3 << 21) | 4).unwrap();
+        m.execute_instruction(&decode_instruction((0x24 << 26) | (3 << 21) | 4))
+            .unwrap();
         assert!(m.cpu.halted);
         assert_eq!(m.cpu.registers[1], TRAP_CODE_INDEX);
         assert_eq!(m.cpu.registers[2], 0x100);
@@ -447,7 +450,7 @@ fn check_failure_in_user_mode_is_a_privilege_violation() {
     m.cpu.program_counter = 0x104;
     m.cpu.registers[3] = 9;
     assert!(matches!(
-        m.execute_instruction((0x24 << 26) | (3 << 21) | 4),
+        m.execute_instruction(&decode_instruction((0x24 << 26) | (3 << 21) | 4)),
         Err(cpu::CpuError::Fault(mmu::MmuFault::PrivilegeViolation { vaddr: 0x100 }))
     ));
     assert!(!m.cpu.halted);
