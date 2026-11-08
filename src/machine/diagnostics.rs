@@ -396,37 +396,15 @@ impl Machine {
         report
     }
 
+    /// The DEBUG instruction: prints the registers and writes the top 4 KiB of
+    /// RAM, where the stack starts, to memory_dump<pc>.txt.
     pub(super) fn debug_dump(&self) -> Result<(), String> {
-        for i in 0..8 {
-            println!("reg{}: 0x{:x}", i, self.cpu.registers[i]);
-        }
-        println!("PC: 0x{:x}", self.cpu.program_counter);
-        println!("SP: 0x{:x}", self.cpu.stack_pointer);
-        println!("BP: 0x{:x}", self.cpu.base_pointer);
-        println!("SR: 0x{:x}", self.status_register());
-        println!("LR: 0x{:x}", self.cpu.link_register);
-        println!(
-            "Flags: Zero: {}, Carry: {}, Sign: {}, Overflow: {}",
-            self.cpu.zero_flag, self.cpu.carry_flag, self.cpu.sign_flag, self.cpu.overflow_flag
-        );
-
+        self.print_registers();
         let filename = format!("memory_dump{}.txt", self.cpu.program_counter);
-        let mut out = File::create(&filename)
-            .map_err(|e| format!("Unable to open file {} for writing: {}", filename, e))?;
-
-        let end_address: u32 = 0x0200_0000;
-        let start_address: u32 = 0x2000_0000u32.wrapping_sub(0x0000_1000);
-        let mut address = start_address;
-        while address <= end_address {
-            let value = self.bus_read_physical(address);
-            writeln!(out, "0x{:x}: 0x{:08x}", address, value).map_err(|e| e.to_string())?;
-            if end_address - address < 4 {
-                break;
-            }
-            address = address.wrapping_add(4);
-        }
-
-        println!("Memory dump written to {}", filename);
-        Ok(())
+        self.dump_memory_text(
+            self.execution.debug_dump_dir.join(filename),
+            RAM_END_EXCLUSIVE - 0x1000,
+            RAM_END_EXCLUSIVE - 1,
+        )
     }
 }

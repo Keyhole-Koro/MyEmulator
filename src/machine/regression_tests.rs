@@ -452,3 +452,29 @@ fn check_failure_in_user_mode_is_a_privilege_violation() {
     ));
     assert!(!m.cpu.halted);
 }
+
+#[test]
+fn debug_dumps_the_top_of_ram_where_the_stack_starts() {
+    let mut m = Machine::new(false, true);
+    m.set_timer_interval(0);
+    let dir = std::env::temp_dir().join(format!("myemu-debug-regression-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    m.execution.debug_dump_dir = dir.clone();
+    m.bus_write_physical(RAM_END_EXCLUSIVE - 0x1000, 0x1122_3344);
+    m.bus_write_physical(RAM_END_EXCLUSIVE - 4, 0xaabb_ccdd);
+    m.bus_write_physical(0x40, 0x1a << 26); // debug
+    m.cpu.program_counter = 0x40;
+    assert_eq!(
+        m.step(DebugOptions::default()).unwrap(),
+        run_loop::StepOutcome::Retired
+    );
+
+    // The file is named after the PC, which is past the DEBUG when it runs.
+    let dump = std::fs::read_to_string(dir.join("memory_dump68.txt")).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    let lines: Vec<&str> = dump.lines().collect();
+    assert_eq!(lines.len(), 2 + 0x1000 / 4);
+    assert_eq!(lines[0], "Memory Dump from 0x1ffff000 to 0x1fffffff");
+    assert_eq!(lines[2], "0x1ffff000: 0x11223344");
+    assert_eq!(lines[lines.len() - 1], "0x1ffffffc: 0xaabbccdd");
+}
