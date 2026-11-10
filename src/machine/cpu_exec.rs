@@ -58,6 +58,7 @@ impl Machine {
             Opcode::Mov
                 | Opcode::Movi
                 | Opcode::Movis
+                | Opcode::Lui
                 | Opcode::Ld
                 | Opcode::Ldb
                 | Opcode::Add
@@ -93,6 +94,12 @@ impl Machine {
             Opcode::Movis => {
                 let imm = inst.imm & 0x1F_FFFF;
                 let value = sign_extend_21(imm) as u32;
+                self.set_register(inst.reg1, value)?;
+                self.update_zero_flag(value);
+            }
+            Opcode::Lui => {
+                // Bits 31..11; an ADDIS supplies bits 10..0 of a full address.
+                let value = (inst.imm & 0x1F_FFFF) << 11;
                 self.set_register(inst.reg1, value)?;
                 self.update_zero_flag(value);
             }

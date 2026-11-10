@@ -49,6 +49,19 @@ fn unknown_user_opcode_raises_illegal_instruction_trap() {
 }
 
 #[test]
+fn lui_and_addis_build_a_full_address() {
+    let mut m = Machine::new(false, true);
+    let address: u32 = 0x4012_3ABC;
+    // lui r2, address >> 11; addis r2, address & 0x7ff
+    m.execute_instruction(&decode_instruction((0x25 << 26) | (2 << 21) | (address >> 11)))
+        .unwrap();
+    assert_eq!(m.cpu.registers[2], address & !0x7ff);
+    m.execute_instruction(&decode_instruction((0x19 << 26) | (2 << 21) | (address & 0x7ff)))
+        .unwrap();
+    assert_eq!(m.cpu.registers[2], address);
+}
+
+#[test]
 fn atomic_swap_replaces_memory_and_returns_previous_word() {
     let mut m = Machine::new(false, true);
     m.cpu.registers[0] = 0x1122_3344;

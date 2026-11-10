@@ -39,6 +39,7 @@ opcodes! {
     Mov = 0x01, "MOV", 16;
     Movi = 0x02, "MOVI", 21;
     Movis = 0x18, "MOVIS", 21;
+    Lui = 0x25, "LUI", 21;
     Ld = 0x03, "LD", 16;
     St = 0x04, "ST", 16;
     Ldb = 0x1C, "LDB", 16;
@@ -145,7 +146,7 @@ mod tests {
         let known: Vec<u8> = (0..64)
             .filter(|&code| Opcode::try_from(code).is_ok())
             .collect();
-        assert_eq!(known.len(), 38);
+        assert_eq!(known.len(), 39);
         for code in known {
             let inst = decode_instruction(u32::from(code) << 26);
             assert_eq!(inst.opcode.map(|op| op as u8), Some(code));
@@ -157,6 +158,7 @@ mod tests {
     fn the_immediate_width_follows_the_opcode() {
         for (op, imm) in [
             (Opcode::Movi, 0x1F_FFFF),
+            (Opcode::Lui, 0x1F_FFFF),
             (Opcode::Chk, 0x1F_FFFF),
             (Opcode::Call, 0x3FF_FFFF),
             (Opcode::Jnz, 0x3FF_FFFF),
