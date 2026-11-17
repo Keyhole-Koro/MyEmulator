@@ -9,6 +9,7 @@ pub(super) struct DisplayDevice {
     pub cursor_x: u32,
     pub cursor_y: u32,
     pub cursor_visible: bool,
+    pub cursor_shape: u32,
 }
 
 impl DisplayDevice {
@@ -21,6 +22,7 @@ impl DisplayDevice {
             cursor_x: 0,
             cursor_y: 0,
             cursor_visible: false,
+            cursor_shape: 0,
         }
     }
 

@@ -154,6 +154,7 @@ impl Machine {
         self.memory.automation.request = Some(command);
         self.memory.automation.tx_buf.clear();
         self.memory.automation.done = false;
+        self.interrupts.raise_irq(crate::constants::IRQ_CAUSE_AUTOMATION);
         Ok(())
     }
 

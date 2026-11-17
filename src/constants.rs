@@ -129,7 +129,11 @@ pub const MOUSE_EVT_WHEEL_ADDR: u32 = IO_BASE + 0xB4;
 
 pub const CURSOR_X_ADDR: u32 = IO_BASE + 0x60;
 pub const CURSOR_Y_ADDR: u32 = IO_BASE + 0x64;
-pub const CURSOR_CTRL_ADDR: u32 = IO_BASE + 0x68;
+pub const CURSOR_CTRL_ADDR: u32 = IO_BASE + 0x68; // bit0=visible, bits1-2=shape
+/// CURSOR_CTRL shape field (bits 1-2): 0 = the arrow, 1 = the I-beam over text.
+pub const CURSOR_SHAPE_SHIFT: u32 = 1;
+pub const CURSOR_SHAPE_MASK: u32 = 3;
+pub const CURSOR_SHAPE_IBEAM: u32 = 1;
 
 pub const MOUSE_X_ADDR: u32 = IO_BASE + 0x40;
 pub const MOUSE_Y_ADDR: u32 = IO_BASE + 0x44;
@@ -158,6 +162,8 @@ pub const IRQ_CAUSE_PAGE_FAULT: u32 = 1 << 5;
 pub const IRQ_CAUSE_PRIVILEGE_VIOLATION: u32 = 1 << 6;
 pub const IRQ_CAUSE_KEYBOARD: u32 = 1 << 7;
 pub const IRQ_CAUSE_ILLEGAL_INSTRUCTION: u32 = 1 << 8;
+/// The host posted a request on the automation bridge (AUTOMATION_RX).
+pub const IRQ_CAUSE_AUTOMATION: u32 = 1 << 9;
 
 // CHK stops the program when its register is not below the limit: r1 gets
 // TRAP_CODE_INDEX and r2 the address of the CHK, then it acts as HALT (a

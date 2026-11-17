@@ -2,7 +2,8 @@ use std::io::{self, Write};
 
 use crate::constants::{
     AUTOMATION_DONE_ADDR, AUTOMATION_RX_ADDR, AUTOMATION_STATUS_ADDR, AUTOMATION_TX_ADDR,
-    CURSOR_CTRL_ADDR, CURSOR_X_ADDR, CURSOR_Y_ADDR, DISPLAY_HEIGHT, DISPLAY_HEIGHT_ADDR,
+    CURSOR_CTRL_ADDR, CURSOR_SHAPE_MASK, CURSOR_SHAPE_SHIFT, CURSOR_X_ADDR, CURSOR_Y_ADDR,
+    DISPLAY_HEIGHT, DISPLAY_HEIGHT_ADDR,
     DISPLAY_SWAP_ADDR, DISPLAY_WIDTH, DISPLAY_WIDTH_ADDR, DMA2D_CMD_ADDR, IRQ_CAUSE_ADDR,
     IRQ_CAUSE_PAGE_FAULT, IRQ_CAUSE_PRIVILEGE_VIOLATION, KBD_EVT_CODE_ADDR, KBD_EVT_MODS_ADDR,
     KBD_EVT_POP_ADDR, KBD_EVT_STATUS_ADDR, KBD_EVT_TYPE_ADDR, KERNEL_SP_ADDR, MMU_CTRL_ADDR,
@@ -243,7 +244,10 @@ impl Machine {
             DMA2D_CMD_ADDR => self.service_dma2d(value),
             CURSOR_X_ADDR => self.devices.display.cursor_x = value,
             CURSOR_Y_ADDR => self.devices.display.cursor_y = value,
-            CURSOR_CTRL_ADDR => self.devices.display.cursor_visible = value & 1 != 0,
+            CURSOR_CTRL_ADDR => {
+                self.devices.display.cursor_visible = value & 1 != 0;
+                self.devices.display.cursor_shape = (value >> CURSOR_SHAPE_SHIFT) & CURSOR_SHAPE_MASK;
+            }
             DISPLAY_SWAP_ADDR => {
                 if value != 0 {
                     self.devices.display.swap();

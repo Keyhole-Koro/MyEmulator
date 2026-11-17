@@ -56,6 +56,7 @@ impl Machine {
                     &mut self.host.cursor_frame,
                     self.devices.display.cursor_x as i32,
                     self.devices.display.cursor_y as i32,
+                    self.devices.display.cursor_shape,
                 );
                 &self.host.cursor_frame
             } else {
@@ -218,34 +219,66 @@ impl Machine {
         }
     }
 }
-// The pointer sprite the display controller overlays: a small arrow with a
-// white edge so it stays visible on any background. Shape mirrors the outline
-// the guest used to draw for itself, but it is composited at scan-out and
-// costs the guest nothing.
-fn draw_cursor_sprite(frame: &mut [u32], hx: i32, hy: i32) {
+// The pointer sprites the display controller overlays, composited at scan-out
+// so they cost the guest nothing. Each row starts at the sprite's left edge;
+// 1 = black, 2 = white, anything else is transparent.
+
+// The arrow, its tip on the hotspot, with a white fill so it stays visible on
+// any background. It mirrors the outline the guest used to draw for itself.
+const ARROW: [&[u8]; 16] = [
+    b"1",
+    b"11",
+    b"121",
+    b"1221",
+    b"12221",
+    b"122221",
+    b"1222221",
+    b"12222221",
+    b"122222221",
+    b"1222222221",
+    b"12222111111",
+    b"122221",
+    b"1221221",
+    b"121 1221",
+    b"11   1221",
+    b"1     121",
+];
+
+// The I-beam shown over text: a black stroke with a white edge, centred on
+// the hotspot.
+const IBEAM: [&[u8]; 17] = [
+    b"222 222",
+    b"2112112",
+    b"2221222",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"  212",
+    b"2221222",
+    b"2112112",
+    b"222 222",
+];
+
+fn draw_cursor_sprite(frame: &mut [u32], hx: i32, hy: i32, shape: u32) {
+    if shape == crate::constants::CURSOR_SHAPE_IBEAM {
+        draw_sprite(frame, hx - 3, hy - 8, &IBEAM);
+    } else {
+        draw_sprite(frame, hx, hy, &ARROW);
+    }
+}
+
+fn draw_sprite(frame: &mut [u32], left: i32, top: i32, sprite: &[&[u8]]) {
     const BLACK: u32 = 0x0000_0000;
     const WHITE: u32 = 0x00FF_FFFF;
-    // Rows of the arrow, from the hotspot down. 1 = outline, 2 = fill.
-    const SPRITE: [&[u8]; 16] = [
-        b"1",
-        b"11",
-        b"121",
-        b"1221",
-        b"12221",
-        b"122221",
-        b"1222221",
-        b"12222221",
-        b"122222221",
-        b"1222222221",
-        b"12222111111",
-        b"122221",
-        b"1221221",
-        b"121 1221",
-        b"11   1221",
-        b"1     121",
-    ];
-    for (dy, row) in SPRITE.iter().enumerate() {
-        let y = hy + dy as i32;
+    for (dy, row) in sprite.iter().enumerate() {
+        let y = top + dy as i32;
         if y < 0 || y >= DISPLAY_HEIGHT as i32 {
             continue;
         }
@@ -255,7 +288,7 @@ fn draw_cursor_sprite(frame: &mut [u32], hx: i32, hy: i32) {
                 b'2' => WHITE,
                 _ => continue,
             };
-            let x = hx + dx as i32;
+            let x = left + dx as i32;
             if x < 0 || x >= DISPLAY_WIDTH as i32 {
                 continue;
             }
