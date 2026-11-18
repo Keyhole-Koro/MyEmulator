@@ -34,6 +34,12 @@ pub struct TimerDevice {
     period: Option<Duration>,
     last_fire: Instant,
     instrs_at_last_fire: u64,
+    // Ticks so far, whether they interrupted or were held back: the guest's
+    // clock, read at TIMER_ADDR.
+    count: u32,
+    // Written at TIMER_ADDR: the ticks before this one pass without an
+    // interrupt, and this one raises it. None: every tick interrupts.
+    hold_until: Option<u32>,
 }
 
 impl TimerDevice {
@@ -42,6 +48,8 @@ impl TimerDevice {
             period: Some(Duration::from_micros(1000)),
             last_fire: Instant::now(),
             instrs_at_last_fire: 0,
+            count: 0,
+            hold_until: None,
         }
     }
 
@@ -72,6 +80,9 @@ impl TimerDevice {
         if let Some(period) = self.period {
             let now = Instant::now();
             if now.duration_since(self.last_fire) >= period {
+                if let Some(until) = self.hold_until {
+                    return self.service_held(until, period, now, instrs_retired);
+                }
                 // Hold the tick back until the guest has actually run. Without
                 // this a handler that outlasts its period starves everything
                 // else; see MIN_INSTRS_PER_TICK.
@@ -85,10 +96,59 @@ impl TimerDevice {
                     self.last_fire = now;
                 }
                 self.instrs_at_last_fire = instrs_retired;
+                self.count = self.count.wrapping_add(1);
                 return true;
             }
         }
         false
+    }
+
+    // While held, no interrupt is due before the wake tick, so the periods
+    // that passed are counted together rather than one per call. A gap of
+    // more than 32 periods means the emulator itself stood still (a debugger
+    // pause, a control-stdio client between requests); as in the periodic
+    // resync, it counts as a single tick. The wake tick interrupts even if
+    // the guest has not run its MIN_INSTRS_PER_TICK: one interrupt cannot
+    // starve it.
+    fn service_held(
+        &mut self,
+        until: u32,
+        period: Duration,
+        now: Instant,
+        instrs_retired: u64,
+    ) -> bool {
+        let passed = now.duration_since(self.last_fire).as_nanos() / period.as_nanos();
+        let stood_still = passed > 32;
+        let passed = if stood_still { 1 } else { passed as u32 };
+        let ticks = passed.min(until.wrapping_sub(self.count));
+        self.count = self.count.wrapping_add(ticks);
+        if stood_still {
+            self.last_fire = now;
+        } else {
+            self.last_fire += period * ticks;
+        }
+        if self.count != until {
+            return false;
+        }
+        self.hold_until = None;
+        self.instrs_at_last_fire = instrs_retired;
+        true
+    }
+
+    // TIMER_ADDR read: the ticks so far.
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+
+    // TIMER_ADDR write: interrupt next at tick `until`. 0, or a tick no later
+    // than the next one, interrupts at every tick.
+    pub fn hold(&mut self, until: u32) {
+        let ahead = until.wrapping_sub(self.count) as i32;
+        self.hold_until = if until != 0 && ahead > 1 {
+            Some(until)
+        } else {
+            None
+        };
     }
 
     // How long until the next tick is due, or None when the timer is disabled.
@@ -96,8 +156,13 @@ impl TimerDevice {
     // busy-spinning.
     pub fn time_until_next(&self) -> Option<Duration> {
         self.period.map(|period| {
+            let ticks = self
+                .hold_until
+                .map_or(1, |until| until.wrapping_sub(self.count).max(1));
             let elapsed = self.last_fire.elapsed();
-            period.checked_sub(elapsed).unwrap_or(Duration::ZERO)
+            (period * ticks)
+                .checked_sub(elapsed)
+                .unwrap_or(Duration::ZERO)
         })
     }
 }
@@ -145,6 +210,76 @@ mod tests {
 
     // The floor is what stops a handler that outlasts its period from starving
     // the guest: the period alone is not enough to fire.
+    #[test]
+    fn every_tick_counts() {
+        let mut t = TimerDevice::new();
+        t.set_period_micros(1_000);
+        std::thread::sleep(Duration::from_millis(3));
+        assert!(t.service(plenty(1), false));
+        assert_eq!(t.count(), 1, "a tick that interrupts counts");
+    }
+
+    // A held timer counts the ticks before the wake tick without
+    // interrupting, all at once, and interrupts at the wake tick.
+    #[test]
+    fn held_ticks_count_without_interrupting_until_the_wake_tick() {
+        let mut t = TimerDevice::new();
+        t.set_period_micros(1_000);
+        t.hold(t.count() + 1_000);
+        std::thread::sleep(Duration::from_millis(4));
+        assert!(!t.service(0, true), "no interrupt before the wake tick");
+        let counted = t.count();
+        assert!(
+            counted >= 3,
+            "the ticks that passed are counted at once: {counted}"
+        );
+        let wake = counted + 3;
+        t.hold(wake);
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(t.service(0, true), "the wake tick interrupts");
+        assert_eq!(t.count(), wake, "and is the tick written");
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(t.service(0, true), "every tick interrupts after it");
+        assert_eq!(t.count(), wake + 1);
+    }
+
+    #[test]
+    fn writing_zero_or_the_next_tick_interrupts_at_every_tick() {
+        let mut t = TimerDevice::new();
+        t.set_period_micros(1_000);
+        t.hold(t.count() + 50);
+        t.hold(0);
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(t.service(0, true), "0 cancels the hold");
+        t.hold(t.count() + 1);
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(t.service(0, true), "the next tick is every tick anyway");
+    }
+
+    // A long gap between services means the emulator stood still; like the
+    // periodic resync, it is one tick, not a jump in the guest's clock.
+    #[test]
+    fn a_held_timer_counts_a_standstill_as_one_tick() {
+        let mut t = TimerDevice::new();
+        t.set_period_micros(1_000);
+        t.hold(t.count() + 1_000);
+        std::thread::sleep(Duration::from_millis(40));
+        assert!(!t.service(0, true));
+        assert_eq!(t.count(), 1);
+    }
+
+    #[test]
+    fn a_held_timer_sleeps_until_its_wake_tick() {
+        let mut t = TimerDevice::new();
+        t.set_period_micros(1_000);
+        t.hold(t.count() + 20);
+        let wait = t.time_until_next().unwrap();
+        assert!(
+            wait > Duration::from_millis(15),
+            "the host may sleep past the held ticks: {wait:?}"
+        );
+    }
+
     #[test]
     fn a_tick_waits_for_the_guest_to_make_progress() {
         let mut t = TimerDevice::new();

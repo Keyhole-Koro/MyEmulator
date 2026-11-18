@@ -10,7 +10,8 @@ use crate::constants::{
     MMU_FAULT_ADDR, MMU_FAULT_STATUS_ADDR, MMU_PDBR_ADDR, MOUSE_BUTTONS_ADDR, MOUSE_EVT_BTN_ADDR,
     MOUSE_EVT_POP_ADDR, MOUSE_EVT_STATUS_ADDR, MOUSE_EVT_WHEEL_ADDR, MOUSE_EVT_X_ADDR,
     MOUSE_EVT_Y_ADDR, MOUSE_X_ADDR, MOUSE_Y_ADDR, SERIAL_LSR_ADDR, SERIAL_RX_ADDR, SERIAL_TX_ADDR,
-    SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR, VRAM_BASE, is_io_address,
+    SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR, TIMER_ADDR, VRAM_BASE,
+    is_io_address,
     is_ram_address, is_vram_address,
 };
 use crate::machine::mmu::{AccessType, MmuFault};
@@ -255,6 +256,7 @@ impl Machine {
                 }
             }
             IRQ_CAUSE_ADDR => self.interrupts.acknowledge(value), // W1C acknowledgement.
+            TIMER_ADDR => self.devices.timer.hold(value),
             KBD_EVT_POP_ADDR => {
                 if value != 0 {
                     self.devices.keyboard.pop();
@@ -344,6 +346,7 @@ impl Machine {
             AUTOMATION_RX_ADDR => self.memory.automation.request.unwrap_or(0),
             SSD_STATUS_ADDR => self.devices.ssd.status(),
             IRQ_CAUSE_ADDR => self.interrupts.cause,
+            TIMER_ADDR => self.devices.timer.count(),
             MOUSE_X_ADDR => self.devices.mouse.x,
             MOUSE_Y_ADDR => self.devices.mouse.y,
             MOUSE_BUTTONS_ADDR => self.devices.mouse.buttons,

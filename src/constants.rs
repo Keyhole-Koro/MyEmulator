@@ -153,6 +153,12 @@ pub const MOUSE_POLL_MS: u64 = 2;
 
 pub const IRQ_VECTOR_ADDR: u32 = IO_BASE + 0x80;
 pub const IRQ_CAUSE_ADDR: u32 = IO_BASE + 0x84; // R/W
+/// The timer. R: its ticks so far, held back or not (wraps at 2^32). W: the
+/// tick to raise the next timer interrupt at; the ticks before it pass without
+/// one, and after it every tick interrupts again. 0 (or a tick no later than
+/// the next) means every tick. A guest with nothing to do before a deadline
+/// sleeps through the ticks in between.
+pub const TIMER_ADDR: u32 = IO_BASE + 0x88;
 pub const IRQ_CAUSE_TIMER: u32 = 1 << 0;
 pub const IRQ_CAUSE_MOUSE: u32 = 1 << 1;
 pub const IRQ_CAUSE_SERIAL: u32 = 1 << 2;

@@ -87,6 +87,26 @@ while idle report ERROR immediately without scheduling a completion IRQ.
 Host file I/O occurs synchronously at the next device service point.
 Oversized existing disk images are rejected, never truncated to capacity.
 
+## Timer
+
+The timer ticks every `--timer-interval` microseconds (1000 by default) of
+wall-clock time, and each tick raises `IRQ_CAUSE_TIMER`. While the CPU executes,
+a tick also waits until the guest has retired `MIN_INSTRS_PER_TICK`
+instructions since the last one, so a slow host delays ticks but never starves
+the guest.
+
+| Address | Register | Access |
+| --- | --- | --- |
+| `0x24000088` | read: ticks so far (wraps at 2^32); write: the tick to interrupt next at | read/write word |
+
+Writing tick `N` holds the interrupts back: the ticks before `N` are counted
+without interrupting, all at once, and tick `N` interrupts; from then on every
+tick interrupts again. Writing 0, or a tick no later than the next one, means
+every tick. A guest with nothing to do before a deadline writes it and waits in
+WFI; the host thread then sleeps through the held ticks too. A gap of more than
+32 periods between services (a debugger pause, a control-stdio client between
+requests) counts as one tick, as the periodic resync does.
+
 ## Board display geometry
 
 `config/hardware.conf` is the authoritative board configuration. `build.rs`
