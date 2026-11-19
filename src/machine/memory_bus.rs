@@ -346,7 +346,7 @@ impl Machine {
             AUTOMATION_RX_ADDR => self.memory.automation.request.unwrap_or(0),
             SSD_STATUS_ADDR => self.devices.ssd.status(),
             IRQ_CAUSE_ADDR => self.interrupts.cause,
-            TIMER_ADDR => self.devices.timer.count(),
+            TIMER_ADDR => self.devices.timer.clock(),
             MOUSE_X_ADDR => self.devices.mouse.x,
             MOUSE_Y_ADDR => self.devices.mouse.y,
             MOUSE_BUTTONS_ADDR => self.devices.mouse.buttons,

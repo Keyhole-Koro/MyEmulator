@@ -97,15 +97,24 @@ the guest.
 
 | Address | Register | Access |
 | --- | --- | --- |
-| `0x24000088` | read: ticks so far (wraps at 2^32); write: the tick to interrupt next at | read/write word |
+| `0x24000088` | read: the clock; write: a clock value to interrupt next at | read/write word |
 
-Writing tick `N` holds the interrupts back: the ticks before `N` are counted
-without interrupting, all at once, and tick `N` interrupts; from then on every
-tick interrupts again. Writing 0, or a tick no later than the next one, means
-every tick. A guest with nothing to do before a deadline writes it and waits in
-WFI; the host thread then sleeps through the held ticks too. A gap of more than
-32 periods between services (a debugger pause, a control-stdio client between
-requests) counts as one tick, as the periodic resync does.
+The register is a clock of 256 units a tick: the ticks so far, held back or not,
+in the high 24 bits, and how far the current tick has got in the low 8. It
+wraps at 2^24 ticks (4.6 hours at the default 1 ms). A tick that is due but not
+yet counted holds the clock at the tick's last unit, so the clock never runs
+backwards. A guest that reads it as it switches threads knows each one's time
+to 1/256 of a tick.
+
+Writing clock value `T` holds the interrupts back until the first tick at or
+after `T`: the ticks before it are counted without interrupting, all at once,
+and that tick interrupts; from then on every tick interrupts again. Writing 0,
+or a value no later than the next tick, means every tick, and so does one more
+than 2^23 ticks ahead, which the 24 bits cannot tell from one in the past. A
+guest with nothing to do before a deadline writes it and waits in WFI; the host
+thread then sleeps through the held ticks too. A gap of more than 32 periods
+between services (a debugger pause, a control-stdio client between requests)
+counts as one tick, as the periodic resync does.
 
 ## Board display geometry
 
