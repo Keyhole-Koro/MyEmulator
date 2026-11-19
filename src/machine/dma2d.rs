@@ -55,19 +55,11 @@ pub fn lerp_color(c0: u32, c1: u32, t: u32) -> u32 {
 // one-pixel anti-aliased ramp across the edge.
 #[inline]
 pub fn round_rect_coverage(px: f32, py: f32, w: f32, h: f32, r: f32) -> f32 {
-    // Signed distance to the rounded box (Inigo Quilez's sdRoundedBox).
-    let hx = w * 0.5;
-    let hy = h * 0.5;
-    let r = r.min(hx).min(hy).max(0.0);
-    let qx = (px - hx).abs() - hx + r;
-    let qy = (py - hy).abs() - hy + r;
-    let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
-    let inside = qx.max(qy).min(0.0);
-    let d = outside + inside - r;
-    (0.5 - d).clamp(0.0, 1.0)
+    (0.5 - round_rect_distance(px, py, w, h, r)).clamp(0.0, 1.0)
 }
 
-// Signed distance from (px, py) to the same rounded box, positive outside.
+// Signed distance from (px, py) to the same rounded box, positive outside
+// (Inigo Quilez's sdRoundedBox).
 #[inline]
 fn round_rect_distance(px: f32, py: f32, w: f32, h: f32, r: f32) -> f32 {
     let hx = w * 0.5;
