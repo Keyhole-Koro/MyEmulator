@@ -166,9 +166,21 @@ fn numbers_past_u32_are_rejected_not_truncated() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(replies.len(), 5);
-    assert_eq!(replies[0]["error"]["code"], "invalid_params", "{}", replies[0]);
-    assert_eq!(replies[1]["error"]["code"], "invalid_params", "{}", replies[1]);
+    assert_eq!(
+        replies[0]["error"]["code"], "invalid_params",
+        "{}",
+        replies[0]
+    );
+    assert_eq!(
+        replies[1]["error"]["code"], "invalid_params",
+        "{}",
+        replies[1]
+    );
     assert_eq!(replies[2]["result"]["watching"], 1, "{}", replies[2]);
-    assert_eq!(replies[3]["error"]["code"], "invalid_params", "{}", replies[3]);
+    assert_eq!(
+        replies[3]["error"]["code"], "invalid_params",
+        "{}",
+        replies[3]
+    );
     assert_eq!(replies[4]["ok"], true, "{}", replies[4]);
 }

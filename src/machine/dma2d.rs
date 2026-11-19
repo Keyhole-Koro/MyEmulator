@@ -390,8 +390,8 @@ mod tests {
         DMA2D_CLIP_Y1_ADDR, DMA2D_CMD_ADDR, DMA2D_CMD_BLEND_FILL, DMA2D_CMD_COPY,
         DMA2D_CMD_COPY_BLEND, DMA2D_CMD_FILL, DMA2D_CMD_GRADIENT_H, DMA2D_CMD_GRADIENT_V,
         DMA2D_CMD_MASK_A8, DMA2D_CMD_ROUND_RECT, DMA2D_CMD_ROUND_RECT_OUTLINE, DMA2D_CMD_SHADOW,
-        DMA2D_COLOR_ADDR, DMA2D_DEST_ADDR, DMA2D_HEIGHT_ADDR, DMA2D_RADIUS_ADDR,
-        DMA2D_SPREAD_ADDR, DMA2D_STRIDE_ADDR, DMA2D_WIDTH_ADDR, VRAM_BASE,
+        DMA2D_COLOR_ADDR, DMA2D_DEST_ADDR, DMA2D_HEIGHT_ADDR, DMA2D_RADIUS_ADDR, DMA2D_SPREAD_ADDR,
+        DMA2D_STRIDE_ADDR, DMA2D_WIDTH_ADDR, VRAM_BASE,
     };
     use crate::machine::Machine;
 
@@ -480,7 +480,9 @@ mod tests {
         let origin = len - 100;
         draw_raw(&mut m, DMA2D_CMD_FILL, origin, 16, u32::MAX, 4);
         assert!(m.devices.display.vram[..origin].iter().all(|&p| p == 0));
-        assert!(m.devices.display.vram[origin..].iter().all(|&p| p == 0x00FF00));
+        assert!(m.devices.display.vram[origin..]
+            .iter()
+            .all(|&p| p == 0x00FF00));
     }
 
     #[test]

@@ -74,7 +74,10 @@ mod tests {
     #[test]
     fn a_missing_file_is_an_error() {
         let mut path = std::env::temp_dir();
-        path.push(format!("myemu-loader-test-missing-{}.bin", std::process::id()));
+        path.push(format!(
+            "myemu-loader-test-missing-{}.bin",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         let error = read_binary_file(path.to_str().unwrap()).unwrap_err();
         assert!(error.starts_with("Unable to open binary file"), "{error}");

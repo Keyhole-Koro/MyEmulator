@@ -333,13 +333,19 @@ fn reply(value: Value) {
 #[cfg(test)]
 mod tests {
     use super::{bool_param, button_param, key_code, u32_param};
-    use crate::constants::{KEY_ENTER, KEY_ESCAPE, KEY_PAGE_DOWN, MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT};
+    use crate::constants::{
+        KEY_ENTER, KEY_ESCAPE, KEY_PAGE_DOWN, MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE,
+        MOUSE_BUTTON_RIGHT,
+    };
     use serde_json::json;
 
     #[test]
     fn u32_param_accepts_the_whole_u32_range() {
         assert_eq!(u32_param(&json!({"x": 0}), "x").unwrap(), 0);
-        assert_eq!(u32_param(&json!({"x": 4294967295u64}), "x").unwrap(), u32::MAX);
+        assert_eq!(
+            u32_param(&json!({"x": 4294967295u64}), "x").unwrap(),
+            u32::MAX
+        );
     }
 
     #[test]
@@ -376,9 +382,18 @@ mod tests {
     #[test]
     fn button_param_names_and_default() {
         assert_eq!(button_param(&json!({})).unwrap(), MOUSE_BUTTON_LEFT);
-        assert_eq!(button_param(&json!({"button": "left"})).unwrap(), MOUSE_BUTTON_LEFT);
-        assert_eq!(button_param(&json!({"button": "right"})).unwrap(), MOUSE_BUTTON_RIGHT);
-        assert_eq!(button_param(&json!({"button": "middle"})).unwrap(), MOUSE_BUTTON_MIDDLE);
+        assert_eq!(
+            button_param(&json!({"button": "left"})).unwrap(),
+            MOUSE_BUTTON_LEFT
+        );
+        assert_eq!(
+            button_param(&json!({"button": "right"})).unwrap(),
+            MOUSE_BUTTON_RIGHT
+        );
+        assert_eq!(
+            button_param(&json!({"button": "middle"})).unwrap(),
+            MOUSE_BUTTON_MIDDLE
+        );
         let (code, _, _) = button_param(&json!({"button": "back"})).unwrap_err();
         assert_eq!(code, "invalid_params");
     }
