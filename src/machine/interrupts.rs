@@ -199,7 +199,13 @@ impl Machine {
                 cause: self.interrupts.cause,
             });
         }
-        self.profile_interrupt(vector, self.cpu.program_counter, self.cpu.stack_pointer);
+        self.profile_interrupt(
+            vector,
+            self.cpu.program_counter,
+            self.cpu.stack_pointer,
+            self.interrupts.cause,
+            trap.unwrap_or(0),
+        );
         self.write_prepared_word(pc_addr, self.cpu.program_counter);
         self.write_prepared_word(sr_addr, sr);
         if was_user {

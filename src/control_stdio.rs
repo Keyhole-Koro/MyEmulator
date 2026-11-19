@@ -14,7 +14,7 @@ use crate::constants::{
     KEY_ENTER, KEY_ESCAPE, KEY_HOME, KEY_LEFT, KEY_PAGE_DOWN, KEY_PAGE_UP, KEY_RIGHT,
     KEY_SPACE, KEY_TAB, KEY_UP, MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT,
 };
-use crate::machine::Machine;
+use crate::machine::{Machine, TraceOptions};
 
 const BRIDGE_DOM_SNAPSHOT: u32 = 1;
 const BRIDGE_DOM_HIT_TEST: u32 = 2 << 28;
@@ -66,11 +66,94 @@ fn profile_write(machine: &Machine, params: &Value) -> Result<Value, MethodError
     Ok(json!({"path": path}))
 }
 
+// A trace needs the profiler's call stacks, and a log to read.
+fn trace_available(machine: &Machine, started: bool) -> Result<(), MethodError> {
+    if !machine.has_profiler() {
+        return Err(("profile_off", "start myemu with --profile".to_string(), Value::Null));
+    }
+    if started && !machine.has_trace() {
+        return Err(("trace_off", "no trace was started".to_string(), Value::Null));
+    }
+    Ok(())
+}
+
+// trace.start: log calls to the watched function entries, each a PC or a
+// {"pc", "space"} pair for one address space only; "all" logs every call.
+// "interrupts" (default true) adds interrupts, their returns and thread
+// switches. "limit" caps the events kept.
+fn trace_start(machine: &mut Machine, params: &Value) -> Result<Value, MethodError> {
+    trace_available(machine, false)?;
+    let mut options = TraceOptions::default();
+    let watch = match params.get("watch") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(entries)) => entries.as_slice(),
+        Some(other) => return Err(("invalid_params", "watch must be an array".to_string(), other.clone())),
+    };
+    for entry in watch {
+        match entry {
+            Value::Object(_) => {
+                let pc = u32_param(entry, "pc")?;
+                match entry.get("space") {
+                    None | Some(Value::Null) => { options.pcs.insert(pc); }
+                    Some(_) => { options.spaced.insert((u32_param(entry, "space")?, pc)); }
+                }
+            }
+            _ => {
+                let pc = entry.as_u64().and_then(|pc| u32::try_from(pc).ok()).ok_or_else(|| {
+                    ("invalid_params", "a watched entry is a PC or {\"pc\", \"space\"}".to_string(), entry.clone())
+                })?;
+                options.pcs.insert(pc);
+            }
+        }
+    }
+    options.all = bool_param(params, "all", false)?;
+    options.interrupts = bool_param(params, "interrupts", true)?;
+    if let Some(limit) = params.get("limit").filter(|value| !value.is_null()) {
+        options.limit = limit.as_u64().map(|n| n as usize)
+            .ok_or_else(|| ("invalid_params", "limit must be an unsigned integer".to_string(), limit.clone()))?;
+    }
+    let watching = options.pcs.len() + options.spaced.len();
+    machine.start_trace(options);
+    Ok(json!({"watching": watching}))
+}
+
+fn trace_stop(machine: &mut Machine) -> Result<Value, MethodError> {
+    trace_available(machine, true)?;
+    let (events, truncated) = machine.stop_trace().unwrap_or_default();
+    Ok(json!({"events": events, "truncated": truncated}))
+}
+
+fn trace_write(machine: &Machine, params: &Value) -> Result<Value, MethodError> {
+    trace_available(machine, true)?;
+    let Some(path) = params.get("path").and_then(Value::as_str) else {
+        return Err(("invalid_params", "trace.write needs a path".to_string(), Value::Null));
+    };
+    let (events, truncated) = machine
+        .write_trace(path)
+        .map_err(|message| ("trace_failed", message, Value::Null))?;
+    Ok(json!({"path": path, "events": events, "truncated": truncated}))
+}
+
+// trace.read: the log itself, from event "since" on (default 0), so a client
+// can follow a running trace without reading it all again.
+fn trace_read(machine: &Machine, params: &Value) -> Result<Value, MethodError> {
+    trace_available(machine, true)?;
+    let since = match params.get("since") {
+        None | Some(Value::Null) => 0,
+        Some(_) => u32_param(params, "since")? as usize,
+    };
+    Ok(machine.read_trace(since).unwrap_or(Value::Null))
+}
+
 fn handle(machine: &mut Machine, request: Request) {
+    // The guest runs while a request is served; a trace shows where each began.
+    if !request.method.starts_with("trace.") {
+        machine.trace_request(&request.method);
+    }
     let result = match request.method.as_str() {
         "session.hello" => Ok(json!({
             "protocol": 2,
-            "capabilities": ["dom.snapshot", "dom.hit_test", "input.pointer.sequence", "input.key.type", "input.key.press", "screen.screenshot", "profile.reset", "profile.write"]
+            "capabilities": ["dom.snapshot", "dom.hit_test", "input.pointer.sequence", "input.key.type", "input.key.press", "screen.screenshot", "profile.reset", "profile.write", "trace.start", "trace.stop", "trace.write", "trace.read"]
         })),
         "os.ready" => wait_for_dom(machine).and_then(|_| quiesce(machine)).map(|_| json!({"ready": true})),
         "dom.snapshot" => dom_snapshot(machine),
@@ -81,6 +164,10 @@ fn handle(machine: &mut Machine, request: Request) {
         "screen.screenshot" => screenshot(machine, &request.params),
         "profile.reset" => profile_reset(machine),
         "profile.write" => profile_write(machine, &request.params),
+        "trace.start" => trace_start(machine, &request.params),
+        "trace.stop" => trace_stop(machine),
+        "trace.write" => trace_write(machine, &request.params),
+        "trace.read" => trace_read(machine, &request.params),
         _ => Err(("unknown_method", format!("unknown method: {}", request.method), Value::Null)),
     };
     match result {
@@ -203,6 +290,14 @@ fn settle(machine: &mut Machine) -> Result<(), (&'static str, String, Value)> {
 fn u32_param(value: &Value, key: &str) -> Result<u32, (&'static str, String, Value)> {
     value.get(key).and_then(Value::as_u64).map(|v| v as u32)
         .ok_or_else(|| ("invalid_params", format!("{} must be an unsigned integer", key), value.clone()))
+}
+
+fn bool_param(value: &Value, key: &str, default: bool) -> Result<bool, MethodError> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(flag)) => Ok(*flag),
+        Some(other) => Err(("invalid_params", format!("{} must be true or false", key), other.clone())),
+    }
 }
 
 fn button_param(value: &Value) -> Result<u32, (&'static str, String, Value)> {

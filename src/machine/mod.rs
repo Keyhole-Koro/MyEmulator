@@ -26,6 +26,7 @@ mod shm_present;
 mod ssd;
 mod stack;
 mod timer;
+mod trace;
 
 #[cfg(test)]
 mod regression_tests;
@@ -37,6 +38,7 @@ use guest_memory::GuestMemory;
 use interrupt_controller::InterruptController;
 use profiler::Profiler;
 use ssd::SsdDevice;
+pub use trace::TraceOptions;
 
 #[derive(Clone, Copy, Default)]
 pub struct DebugOptions {

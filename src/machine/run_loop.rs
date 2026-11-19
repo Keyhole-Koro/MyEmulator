@@ -5,6 +5,10 @@ use crate::instruction::{Opcode, decode_instruction};
 
 use super::{DebugOptions, Machine};
 
+// Register numbers in an instruction's register fields.
+const REG_PC: u8 = 0x08;
+const REG_LR: u8 = 0x0C;
+
 impl Machine {
     // MYOS-004: advance the machine for up to max_instructions (or until it
     // halts, or a wall-clock safety cap elapses, whichever comes first) and
@@ -79,12 +83,19 @@ impl Machine {
         }
         self.cpu.instrs_retired = self.cpu.instrs_retired.wrapping_add(1);
         if let Some(space) = space {
-            self.profile_retired(pc, space, inst.opcode_bits());
+            // A function value is called by setting LR to the return address
+            // and moving the callee into PC; `mov pc, lr` is the return.
+            let call = match inst.opcode {
+                Some(Opcode::Call) => true,
+                Some(Opcode::Mov) => inst.reg1 == REG_PC && inst.reg2 != REG_LR,
+                _ => false,
+            };
+            self.profile_retired(pc, space, inst.opcode_bits(), call);
         }
         Ok(StepOutcome::Retired)
     }
 
-    fn profile_retired(&mut self, pc: u32, space: u32, opcode: u8) {
+    fn profile_retired(&mut self, pc: u32, space: u32, opcode: u8, call: bool) {
         let next_pc = self.cpu.program_counter;
         let link = self.cpu.link_register;
         let sp = self.cpu.stack_pointer;
@@ -92,7 +103,7 @@ impl Machine {
             return;
         };
         let new_space = profiler.record_instruction(pc, space, opcode);
-        if opcode == Opcode::Call as u8 {
+        if call {
             profiler.record_call(next_pc, space, link, sp);
         } else if next_pc != pc.wrapping_add(4) {
             profiler.record_jump(next_pc, sp);
@@ -104,6 +115,7 @@ impl Machine {
                 profiler.set_text_sample(space, base, sample);
             }
         }
+        self.stamp_trace();
     }
 
     fn note_pc(&mut self) {

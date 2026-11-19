@@ -129,6 +129,19 @@ then use `os.ready`, `dom.snapshot`, `input.pointer.sequence`,
 `src/control_stdio.rs`). DOM snapshots cross a dedicated automation MMIO
 bridge; they do not type a command into the OS shell or parse serial markers.
 
+With `--profile` (and `--profile-thread-var`, so it follows threads) a client
+can also record what ran, in order. `trace.start` takes `watch`, a list of
+function entry PCs, each a number or `{"pc", "space"}` for one address space,
+and optionally `"all": true`, `"interrupts": false` and a `limit`. From then on
+the log holds every call to a watched entry and its return, every interrupt
+with its cause bits (for a syscall also r1 and r5), the `iret` back, each
+thread switch and each control request. Every event has the instructions
+retired so far and the timer's clock. `trace.read {"since": n}` returns the
+log from event n, `trace.write {"path"}` writes it to a file and `trace.stop`
+ends it. A call is a `call`, or a `mov pc, rX` from any register but LR,
+which is how a function value is called; the profile counts both. See
+`src/machine/trace.rs`.
+
 ### Debugging preemption
 
 `MYEMU_IRQ_CHECK=1` snapshots the CPU state at every IRQ entry and reports,

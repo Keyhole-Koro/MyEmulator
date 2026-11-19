@@ -3,8 +3,12 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use serde_json::Value;
+
+use crate::constants::IRQ_CAUSE_SYSCALL;
 use crate::instruction::mnemonic;
 
+use super::trace::{EventLog, IrqInfo, SpaceText, ThreadStack, TraceKind, TraceOptions};
 use super::Machine;
 
 impl Machine {
@@ -46,7 +50,8 @@ impl Machine {
         }
     }
 
-    // A word store: the one write that can change the current thread.
+    // A word store: the one write that can change the current thread. A trace
+    // event it logs is stamped when the store retires.
     pub(super) fn profile_word_write(&mut self, address: u32, value: u32) {
         let user = self.is_user_mode();
         if let Some(profiler) = self.execution.profiler.as_mut() {
@@ -58,11 +63,117 @@ impl Machine {
     }
 
     // An interrupt or trap vectored: from here to the matching `iret` is a call
-    // the program never wrote. `return_pc` and `return_sp` are what `iret` restores.
-    pub(super) fn profile_interrupt(&mut self, vector: u32, return_pc: u32, return_sp: u32) {
-        if let Some(profiler) = self.execution.profiler.as_mut() {
-            profiler.record_interrupt(vector, return_pc, return_sp);
+    // the program never wrote. `return_pc` and `return_sp` are what `iret`
+    // restores; `cause` holds every pending cause bit and `trap` the one an
+    // instruction raised, if any. Called before the CPU enters kernel mode, so
+    // the space is the interrupted code's.
+    pub(super) fn profile_interrupt(
+        &mut self,
+        vector: u32,
+        return_pc: u32,
+        return_sp: u32,
+        cause: u32,
+        trap: u32,
+    ) {
+        if self.execution.profiler.is_none() {
+            return;
         }
+        let irq = IrqInfo {
+            space: self.profile_space(),
+            cause,
+            trap,
+            syscall: (trap & IRQ_CAUSE_SYSCALL != 0)
+                .then(|| (self.cpu.registers[1], self.cpu.registers[5])),
+        };
+        if let Some(profiler) = self.execution.profiler.as_mut() {
+            profiler.record_interrupt(vector, return_pc, return_sp, irq);
+        }
+        self.stamp_trace();
+    }
+
+    // Give the trace events logged since the last stamp the instruction count
+    // and the timer's clock. The clock is read only when there is an event.
+    pub(super) fn stamp_trace(&mut self) {
+        let unstamped = self
+            .execution
+            .profiler
+            .as_ref()
+            .is_some_and(Profiler::trace_unstamped);
+        if unstamped {
+            let retired = self.cpu.instrs_retired;
+            let clock = self.devices.timer.clock();
+            if let Some(profiler) = self.execution.profiler.as_mut() {
+                profiler.stamp_trace(retired, clock);
+            }
+        }
+    }
+
+    pub fn has_profiler(&self) -> bool {
+        self.execution.profiler.is_some()
+    }
+
+    pub fn has_trace(&self) -> bool {
+        self.execution.profiler.as_ref().is_some_and(|p| p.trace.is_some())
+    }
+
+    // Start a new trace log, replacing any earlier one. False without a profiler.
+    pub fn start_trace(&mut self, options: TraceOptions) -> bool {
+        let retired = self.cpu.instrs_retired;
+        let clock = self.devices.timer.clock();
+        let Some(profiler) = self.execution.profiler.as_mut() else {
+            return false;
+        };
+        profiler.start_trace(options);
+        if let Some(log) = profiler.trace.as_mut() {
+            log.set_started(retired, clock);
+        }
+        true
+    }
+
+    // Stop logging, keeping what was logged: (events, cut short by the limit).
+    pub fn stop_trace(&mut self) -> Option<(usize, bool)> {
+        let log = self.execution.profiler.as_mut()?.trace.as_mut()?;
+        log.stop();
+        Some((log.len(), log.truncated()))
+    }
+
+    // Mark where a control request started running the guest.
+    pub fn trace_request(&mut self, method: &str) {
+        let recording = self
+            .execution
+            .profiler
+            .as_ref()
+            .and_then(|p| p.trace.as_ref())
+            .is_some_and(EventLog::recording);
+        if !recording {
+            return;
+        }
+        let space = self.profile_space();
+        if let Some(profiler) = self.execution.profiler.as_mut() {
+            profiler.log_request(method, space);
+        }
+        self.stamp_trace();
+    }
+
+    // Write the whole trace to `path`: (events, cut short by the limit).
+    pub fn write_trace<P: AsRef<Path>>(&self, path: P) -> Result<(usize, bool), String> {
+        let profiler = self.execution.profiler.as_ref().ok_or("no profiler")?;
+        let log = profiler.trace.as_ref().ok_or("no trace was started")?;
+        let file = File::create(path.as_ref()).map_err(|e| {
+            format!("Unable to open trace file {}: {}", path.as_ref().display(), e)
+        })?;
+        let mut out = BufWriter::new(file);
+        log.write_to(&mut out, &profiler.space_texts(&log.spaces_from(0)))
+            .and_then(|()| out.flush())
+            .map_err(err)?;
+        Ok((log.len(), log.truncated()))
+    }
+
+    // The trace's events from `since` on, as JSON, or None without a trace.
+    pub fn read_trace(&self, since: usize) -> Option<Value> {
+        let profiler = self.execution.profiler.as_ref()?;
+        let log = profiler.trace.as_ref()?;
+        Some(log.to_value(since, &profiler.space_texts(&log.spaces_from(since))))
     }
 
     // Read the text page at `base`, without touching accessed bits or the TLB. A report matches these bytes against the built images to
@@ -112,6 +223,10 @@ struct CallFrame {
     entered_at: u64,
     // False for a recursive call, so inclusive time counts once per function.
     outermost: bool,
+    // Pushed by an interrupt rather than a call.
+    interrupt: bool,
+    // Its entry went to the trace log, so its exit does too.
+    traced: bool,
 }
 
 // A call stack and instruction count for one thread of execution.
@@ -122,7 +237,14 @@ struct ThreadState {
 }
 
 impl ThreadState {
-    fn push(&mut self, func: FuncKey, return_addr: u32, return_sp: u32) {
+    fn push(
+        &mut self,
+        func: FuncKey,
+        return_addr: u32,
+        return_sp: u32,
+        interrupt: bool,
+        traced: bool,
+    ) {
         let outermost = !self.frames.iter().any(|frame| frame.func == func);
         self.frames.push(CallFrame {
             func,
@@ -131,6 +253,8 @@ impl ThreadState {
             self_count: 0,
             entered_at: self.retired,
             outermost,
+            interrupt,
+            traced,
         });
     }
 }
@@ -197,6 +321,9 @@ pub struct Profiler {
     thread_var: Option<u32>,
     // Instructions per thread since the last reset.
     thread_hits: HashMap<u32, u64>,
+
+    // The ordered event log, once a trace has been started.
+    trace: Option<EventLog>,
 }
 
 // The thread id before the kernel first writes its variable.
@@ -221,6 +348,7 @@ impl Profiler {
             parked: HashMap::new(),
             thread_var,
             thread_hits: HashMap::new(),
+            trace: None,
         };
         profiler.seed_root((0, entry_pc));
         profiler
@@ -229,7 +357,7 @@ impl Profiler {
     // Instructions run before any CALL still need a frame to land in. A root
     // frame returns nowhere, so it stays until the end.
     fn seed_root(&mut self, func: FuncKey) {
-        self.current.push(func, u32::MAX, u32::MAX);
+        self.current.push(func, u32::MAX, u32::MAX, false, false);
         self.func_stats.entry(func).or_default().call_count += 1;
     }
 
@@ -311,24 +439,49 @@ impl Profiler {
         }
         let next = self.parked.remove(&value).unwrap_or_default();
         let previous = std::mem::replace(&mut self.current, next);
-        self.parked.insert(self.current_thread, previous);
-        self.current_thread = value;
+        let from = std::mem::replace(&mut self.current_thread, value);
+        self.parked.insert(from, previous);
+        if let Some(log) = self.trace.as_mut().filter(|log| log.options.interrupts) {
+            log.push(value, 0, 0, TraceKind::Switch { from });
+        }
     }
 
-    // A CALL just executed. `callee_entry` is the PC it jumped to; `return_addr`
+    // A call just executed: a CALL, or a move into PC with LR already set to
+    // the return address. `callee_entry` is the PC it jumped to; `return_addr`
     // is where control resumes when the callee returns (LR at call time) and
     // `sp` the stack pointer then. Pushes a frame and records the call edge.
     pub fn record_call(&mut self, callee_entry: u32, space: u32, return_addr: u32, sp: u32) {
-        self.enter((space, callee_entry), return_addr, sp);
+        let thread = self.current_thread;
+        let traced = match self.trace.as_mut() {
+            Some(log) if log.options.watches(space, callee_entry) => {
+                log.push(thread, space, callee_entry, TraceKind::Enter)
+            }
+            _ => false,
+        };
+        self.enter((space, callee_entry), return_addr, sp, false, traced);
     }
 
-    pub fn record_interrupt(&mut self, vector: u32, return_addr: u32, sp: u32) {
-        self.enter((0, vector), return_addr, sp);
+    pub fn record_interrupt(&mut self, vector: u32, return_addr: u32, sp: u32, irq: IrqInfo) {
+        let thread = self.current_thread;
+        let traced = match self.trace.as_mut() {
+            Some(log) if log.options.interrupts => {
+                log.push(thread, irq.space, vector, TraceKind::Irq(irq))
+            }
+            _ => false,
+        };
+        self.enter((0, vector), return_addr, sp, true, traced);
     }
 
-    fn enter(&mut self, callee: FuncKey, return_addr: u32, sp: u32) {
+    fn enter(
+        &mut self,
+        callee: FuncKey,
+        return_addr: u32,
+        sp: u32,
+        interrupt: bool,
+        traced: bool,
+    ) {
         let caller = self.current.frames.last().map(|frame| frame.func).unwrap_or(callee);
-        self.current.push(callee, return_addr, sp);
+        self.current.push(callee, return_addr, sp, interrupt, traced);
         self.func_stats.entry(callee).or_default().call_count += 1;
         *self.edges.entry((caller, callee)).or_insert(0) += 1;
     }
@@ -344,18 +497,83 @@ impl Profiler {
             .find(|&i| frames[i].return_addr == new_pc && sp >= frames[i].return_sp);
         if let Some(index) = target {
             while self.current.frames.len() > index {
-                self.pop_frame();
+                let unwound = self.current.frames.len() - 1 > index;
+                self.pop_frame(unwound);
             }
         }
     }
 
-    fn pop_frame(&mut self) {
+    // `unwound`: the frame did not return itself; a frame below it did.
+    fn pop_frame(&mut self, unwound: bool) {
         if let Some(frame) = self.current.frames.pop() {
             self.func_stats
                 .entry(frame.func)
                 .or_default()
                 .fold(&frame, self.current.retired);
+            if let Some(log) = self.trace.as_mut().filter(|_| frame.traced) {
+                let kind = if frame.interrupt {
+                    TraceKind::Iret { unwound }
+                } else {
+                    TraceKind::Exit { unwound }
+                };
+                log.push(self.current_thread, frame.func.0, frame.func.1, kind);
+            }
         }
+    }
+
+    // A new trace log, which starts with every thread's call stack as it is.
+    // Frames entered under an earlier trace no longer log their exits.
+    pub fn start_trace(&mut self, options: TraceOptions) {
+        let mut stacks = Vec::new();
+        let current = std::iter::once((&self.current_thread, &mut self.current));
+        for (thread, state) in current.chain(self.parked.iter_mut()) {
+            for frame in &mut state.frames {
+                frame.traced = false;
+            }
+            let frames = state
+                .frames
+                .iter()
+                .map(|frame| (frame.func.0, frame.func.1, frame.return_addr))
+                .collect();
+            stacks.push(ThreadStack { thread: *thread, frames });
+        }
+        stacks.sort_by_key(|stack| stack.thread as i32);
+        self.trace = Some(EventLog::new(options, stacks));
+    }
+
+    pub fn log_request(&mut self, method: &str, space: u32) {
+        let thread = self.current_thread;
+        if let Some(log) = self.trace.as_mut() {
+            let method = method.to_string();
+            log.push(thread, space, 0, TraceKind::Request { method });
+        }
+    }
+
+    pub fn trace_unstamped(&self) -> bool {
+        self.trace.as_ref().is_some_and(EventLog::unstamped)
+    }
+
+    pub fn stamp_trace(&mut self, retired: u64, clock: u32) {
+        if let Some(log) = self.trace.as_mut() {
+            log.stamp(retired, clock);
+        }
+    }
+
+    // The text samples of user spaces, for a reader to name their programs.
+    // The kernel's space needs none.
+    fn space_texts(&self, spaces: &[u32]) -> Vec<SpaceText<'_>> {
+        spaces
+            .iter()
+            .filter(|&&space| space != 0)
+            .filter_map(|&space| {
+                let stats = self.spaces.get(&space)?;
+                Some(SpaceText {
+                    space,
+                    text_base: stats.text_base,
+                    text_sample: &stats.text_sample,
+                })
+            })
+            .collect()
     }
 
     // Forget what was counted so far but keep the call stacks, so a later report
@@ -632,7 +850,7 @@ mod tests {
     #[test]
     fn an_iret_unwinds_frames_a_switch_left_above_the_interrupt() {
         let mut p = Profiler::new(0x100, None);
-        p.record_interrupt(0x900, 0x104, SP);
+        p.record_interrupt(0x900, 0x104, SP, IrqInfo::default());
         p.record_call(0x920, 0, 0x908, SP - 32);
         p.record_call(0x940, 0, 0x928, SP - 48);
         p.record_jump(0x104, SP);
@@ -662,6 +880,196 @@ mod tests {
         assert_eq!(p.user_space(), 0x7000);
         p.enter_space(0x7000, Some(&[3, 4]));
         assert_eq!(p.user_space(), 0x7001);
+    }
+
+    fn watching(pcs: &[u32]) -> TraceOptions {
+        TraceOptions {
+            pcs: pcs.iter().copied().collect(),
+            ..TraceOptions::default()
+        }
+    }
+
+    fn logged(p: &Profiler) -> Vec<(u32, TraceKind)> {
+        let log = p.trace.as_ref().expect("a trace");
+        log.events().iter().map(|e| (e.pc, e.kind.clone())).collect()
+    }
+
+    const ENTER: TraceKind = TraceKind::Enter;
+    const EXIT: TraceKind = TraceKind::Exit { unwound: false };
+    const UNWOUND: TraceKind = TraceKind::Exit { unwound: true };
+
+    #[test]
+    fn a_watched_call_logs_its_entry_and_its_return() {
+        let mut p = Profiler::new(0x100, None);
+        p.start_trace(watching(&[0x200]));
+        p.record_call(0x200, 0, 0x108, SP);
+        p.record_call(0x300, 0, 0x208, SP - 16);
+        p.record_jump(0x208, SP - 16);
+        p.record_jump(0x108, SP);
+        assert_eq!(logged(&p), vec![(0x200, ENTER), (0x200, EXIT)]);
+    }
+
+    #[test]
+    fn a_frame_finished_by_a_return_below_it_exits_unwound() {
+        let mut p = Profiler::new(0x100, None);
+        p.start_trace(watching(&[0x200, 0x300]));
+        p.record_call(0x200, 0, 0x108, SP);
+        p.record_call(0x300, 0, 0x208, SP - 16);
+        p.record_jump(0x108, SP);
+        assert_eq!(
+            logged(&p),
+            vec![(0x200, ENTER), (0x300, ENTER), (0x300, UNWOUND), (0x200, EXIT)]
+        );
+    }
+
+    #[test]
+    fn an_interrupt_logs_its_cause_and_the_return_from_it() {
+        let mut p = Profiler::new(0x100, None);
+        p.start_trace(watching(&[]));
+        let irq = IrqInfo {
+            space: 0x7000,
+            cause: 0x11,
+            trap: 0x10,
+            syscall: Some((10, 1)),
+        };
+        p.record_interrupt(0x900, 0x104, SP, irq);
+        p.record_jump(0x104, SP);
+        assert_eq!(
+            logged(&p),
+            vec![(0x900, TraceKind::Irq(irq)), (0x900, TraceKind::Iret { unwound: false })]
+        );
+        assert_eq!(p.trace.as_ref().unwrap().events()[0].space, 0x7000);
+    }
+
+    #[test]
+    fn a_thread_switch_is_logged_with_the_thread_left() {
+        let mut p = Profiler::new(0x100, Some(0x5000));
+        p.start_trace(watching(&[0x200]));
+        p.record_word_store(0x5000, 1);
+        p.record_call(0x200, 0, 0x108, SP);
+        p.record_word_store(0x5000, 2);
+        let log = p.trace.as_ref().unwrap();
+        let events: Vec<(u32, TraceKind)> =
+            log.events().iter().map(|e| (e.thread, e.kind.clone())).collect();
+        assert_eq!(
+            events,
+            vec![
+                (1, TraceKind::Switch { from: BOOT_THREAD }),
+                (1, ENTER),
+                (2, TraceKind::Switch { from: 1 }),
+            ]
+        );
+    }
+
+    #[test]
+    fn without_interrupts_a_trace_logs_only_calls() {
+        let mut p = Profiler::new(0x100, Some(0x5000));
+        p.start_trace(TraceOptions {
+            interrupts: false,
+            ..watching(&[0x200])
+        });
+        p.record_interrupt(0x900, 0x104, SP, IrqInfo::default());
+        p.record_word_store(0x5000, 3);
+        p.record_call(0x200, 0, 0x908, SP - 32);
+        p.record_jump(0x104, SP);
+        assert_eq!(logged(&p), vec![(0x200, ENTER)]);
+    }
+
+    #[test]
+    fn a_watch_for_one_space_ignores_the_same_pc_in_another() {
+        let mut p = Profiler::new(0x100, None);
+        let mut options = watching(&[]);
+        options.spaced.insert((0x7000, 0x4000_0000));
+        p.start_trace(options);
+        p.record_call(0x4000_0000, 0x8000, 0x4000_0108, SP);
+        p.record_call(0x4000_0000, 0x7000, 0x4000_0208, SP - 16);
+        let log = p.trace.as_ref().unwrap();
+        let spaces: Vec<u32> = log.events().iter().map(|e| e.space).collect();
+        assert_eq!(spaces, vec![0x7000]);
+    }
+
+    #[test]
+    fn the_log_stops_at_its_limit() {
+        let mut p = Profiler::new(0x100, None);
+        p.start_trace(TraceOptions {
+            limit: 3,
+            ..watching(&[0x200])
+        });
+        for _ in 0..3 {
+            p.record_call(0x200, 0, 0x108, SP);
+            p.record_jump(0x108, SP);
+        }
+        let log = p.trace.as_ref().unwrap();
+        assert_eq!((log.len(), log.truncated(), log.recording()), (3, true, false));
+    }
+
+    #[test]
+    fn a_new_trace_starts_from_the_stacks_as_they_are() {
+        let mut p = Profiler::new(0x100, None);
+        p.start_trace(watching(&[0x200]));
+        p.record_call(0x200, 0, 0x108, SP);
+        p.start_trace(watching(&[0x200]));
+        p.record_jump(0x108, SP);
+        assert!(logged(&p).is_empty(), "the exit of a frame entered before");
+        let log = p.trace.as_ref().unwrap();
+        let value = log.to_value(0, &[]);
+        assert_eq!(value["stacks"][0]["thread"], -2);
+        assert_eq!(value["stacks"][0]["frames"][0]["return"], Value::Null);
+        assert_eq!(value["stacks"][0]["frames"][1]["pc"], 0x200);
+        assert_eq!(value["stacks"][0]["frames"][1]["return"], 0x108);
+    }
+
+    #[test]
+    fn events_carry_the_stamp_the_machine_gives_them() {
+        let mut p = Profiler::new(0x100, None);
+        p.start_trace(watching(&[0x200]));
+        p.record_call(0x200, 0, 0x108, SP);
+        assert!(p.trace_unstamped());
+        p.stamp_trace(42, 0x1234);
+        assert!(!p.trace_unstamped());
+        p.record_jump(0x108, SP);
+        p.stamp_trace(50, 0x1300);
+        let stamps: Vec<(u64, u32)> = p.trace.as_ref().unwrap().events().iter()
+            .map(|e| (e.retired, e.clock)).collect();
+        assert_eq!(stamps, vec![(42, 0x1234), (50, 0x1300)]);
+    }
+
+    // `movi lr, ret; mov pc, r2` is how a function value is called.
+    #[test]
+    fn a_move_into_pc_is_a_call_and_mov_pc_lr_its_return() {
+        const MOVI: u32 = 0x02 << 26;
+        const MOV: u32 = 0x01 << 26;
+        const HALT: u32 = 0x3F << 26;
+        const PC: u32 = 0x08;
+        const LR: u32 = 0x0C;
+        let program = [
+            MOVI | (2 << 21) | 0x20,       // 0x00: the callee
+            MOVI | (LR << 21) | 0x0C,      // 0x04: where it returns
+            MOV | (PC << 21) | (2 << 16),  // 0x08: call it
+            HALT,                          // 0x0C
+            0,
+            0,
+            0,
+            0,
+            MOVI | (1 << 21) | 7,          // 0x20
+            MOV | (PC << 21) | (LR << 16), // 0x24: return
+        ];
+        let mut m = Machine::new(false, true);
+        m.set_timer_interval(0);
+        m.load_program(&program, 0);
+        m.enable_profiler(0, None);
+        assert!(m.start_trace(watching(&[0x20])));
+        m.run_frame_budget(100).unwrap();
+        assert!(m.cpu.halted);
+
+        let p = m.execution.profiler.as_ref().unwrap();
+        let callee = stats(p, 0x20);
+        assert_eq!((callee.self_count, callee.inclusive_count, callee.call_count), (2, 2, 1));
+        assert_eq!(stats(p, 0).self_count, 4);
+        assert_eq!(p.edges[&((0, 0), (0, 0x20))], 1);
+        let stamped: Vec<(TraceKind, u64)> = p.trace.as_ref().unwrap().events().iter()
+            .map(|e| (e.kind.clone(), e.retired)).collect();
+        assert_eq!(stamped, vec![(ENTER, 3), (EXIT, 5)]);
     }
 
     #[test]
