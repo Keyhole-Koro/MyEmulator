@@ -147,3 +147,28 @@ fn a_trace_needs_the_profiler() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(replies[0]["error"]["code"], "profile_off", "{}", replies[0]);
 }
+
+#[test]
+fn numbers_past_u32_are_rejected_not_truncated() {
+    // 2^32 used to be cut to 0 in the object form and in "since", so a
+    // client asking for an impossible PC silently watched PC 0 instead.
+    let dir = temporary("trace-u32");
+    let replies = session(
+        &dir,
+        true,
+        &[
+            json!({"method": "trace.start", "params": {"watch": [{"pc": 4294967296u64}]}}),
+            json!({"method": "trace.start", "params": {"watch": [{"pc": 0x20, "space": 4294967296u64}]}}),
+            json!({"method": "trace.start", "params": {"watch": [{"pc": 4294967295u64}]}}),
+            json!({"method": "trace.read", "params": {"since": 4294967296u64}}),
+            json!({"method": "trace.read", "params": {"since": 0}}),
+        ],
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(replies.len(), 5);
+    assert_eq!(replies[0]["error"]["code"], "invalid_params", "{}", replies[0]);
+    assert_eq!(replies[1]["error"]["code"], "invalid_params", "{}", replies[1]);
+    assert_eq!(replies[2]["result"]["watching"], 1, "{}", replies[2]);
+    assert_eq!(replies[3]["error"]["code"], "invalid_params", "{}", replies[3]);
+    assert_eq!(replies[4]["ok"], true, "{}", replies[4]);
+}
