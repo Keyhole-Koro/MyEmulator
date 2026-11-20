@@ -55,19 +55,11 @@ pub fn lerp_color(c0: u32, c1: u32, t: u32) -> u32 {
 // one-pixel anti-aliased ramp across the edge.
 #[inline]
 pub fn round_rect_coverage(px: f32, py: f32, w: f32, h: f32, r: f32) -> f32 {
-    // Signed distance to the rounded box (Inigo Quilez's sdRoundedBox).
-    let hx = w * 0.5;
-    let hy = h * 0.5;
-    let r = r.min(hx).min(hy).max(0.0);
-    let qx = (px - hx).abs() - hx + r;
-    let qy = (py - hy).abs() - hy + r;
-    let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
-    let inside = qx.max(qy).min(0.0);
-    let d = outside + inside - r;
-    (0.5 - d).clamp(0.0, 1.0)
+    (0.5 - round_rect_distance(px, py, w, h, r)).clamp(0.0, 1.0)
 }
 
-// Signed distance from (px, py) to the same rounded box, positive outside.
+// Signed distance from (px, py) to the same rounded box, positive outside
+// (Inigo Quilez's sdRoundedBox).
 #[inline]
 fn round_rect_distance(px: f32, py: f32, w: f32, h: f32, r: f32) -> f32 {
     let hx = w * 0.5;
@@ -151,6 +143,21 @@ impl Machine {
             x1 = x1.min(cols_left);
             let total_rows = DISPLAY_HEIGHT.saturating_sub(origin / stride);
             y1 = y1.min(total_rows);
+        } else {
+            // Guest register values must not make the host allocate or loop
+            // beyond VRAM. A row is at most one stride wide (wider rows would
+            // overlap the next one), and rows stop at the last one that fits
+            // whole in VRAM; every command already skips or stops at a row
+            // that does not fit, so no written pixel changes.
+            x1 = x1.min(stride);
+            let fit_rows = self
+                .devices
+                .display
+                .vram
+                .len()
+                .checked_sub(origin + x1)
+                .map_or(0, |room| room / stride + 1);
+            y1 = y1.min(fit_rows);
         }
         if x1 <= x0 || y1 <= y0 {
             return None;
@@ -380,9 +387,11 @@ mod tests {
     use super::{blend_pixel, lerp_color, round_rect_coverage};
     use crate::constants::{
         DISPLAY_WIDTH, DMA2D_CLIP_X0_ADDR, DMA2D_CLIP_X1_ADDR, DMA2D_CLIP_Y0_ADDR,
-        DMA2D_CLIP_Y1_ADDR, DMA2D_CMD_ADDR, DMA2D_CMD_FILL, DMA2D_CMD_ROUND_RECT,
-        DMA2D_CMD_SHADOW, DMA2D_COLOR_ADDR, DMA2D_DEST_ADDR, DMA2D_HEIGHT_ADDR,
-        DMA2D_RADIUS_ADDR, DMA2D_SPREAD_ADDR, DMA2D_STRIDE_ADDR, DMA2D_WIDTH_ADDR, VRAM_BASE,
+        DMA2D_CLIP_Y1_ADDR, DMA2D_CMD_ADDR, DMA2D_CMD_BLEND_FILL, DMA2D_CMD_COPY,
+        DMA2D_CMD_COPY_BLEND, DMA2D_CMD_FILL, DMA2D_CMD_GRADIENT_H, DMA2D_CMD_GRADIENT_V,
+        DMA2D_CMD_MASK_A8, DMA2D_CMD_ROUND_RECT, DMA2D_CMD_ROUND_RECT_OUTLINE, DMA2D_CMD_SHADOW,
+        DMA2D_COLOR_ADDR, DMA2D_DEST_ADDR, DMA2D_HEIGHT_ADDR, DMA2D_RADIUS_ADDR, DMA2D_SPREAD_ADDR,
+        DMA2D_STRIDE_ADDR, DMA2D_WIDTH_ADDR, VRAM_BASE,
     };
     use crate::machine::Machine;
 
@@ -409,6 +418,95 @@ mod tests {
 
     fn pixel(m: &Machine, x: usize, y: usize) -> u32 {
         m.devices.display.vram[y * DISPLAY_WIDTH + x]
+    }
+
+    const ALL_CMDS: [u32; 10] = [
+        DMA2D_CMD_FILL,
+        DMA2D_CMD_BLEND_FILL,
+        DMA2D_CMD_COPY,
+        DMA2D_CMD_COPY_BLEND,
+        DMA2D_CMD_MASK_A8,
+        DMA2D_CMD_GRADIENT_V,
+        DMA2D_CMD_GRADIENT_H,
+        DMA2D_CMD_ROUND_RECT,
+        DMA2D_CMD_ROUND_RECT_OUTLINE,
+        DMA2D_CMD_SHADOW,
+    ];
+
+    // Run `cmd` with raw register values: `origin` is a VRAM pixel index and
+    // `stride` need not be the display width. SRC stays at its reset value 0
+    // (the ROM window), which the copy and mask commands read as zeros.
+    fn draw_raw(m: &mut Machine, cmd: u32, origin: usize, w: u32, h: u32, stride: u32) {
+        m.bus_write_physical(DMA2D_DEST_ADDR, VRAM_BASE + origin as u32 * 4);
+        m.bus_write_physical(DMA2D_WIDTH_ADDR, w);
+        m.bus_write_physical(DMA2D_HEIGHT_ADDR, h);
+        m.bus_write_physical(DMA2D_STRIDE_ADDR, stride);
+        m.bus_write_physical(DMA2D_COLOR_ADDR, 0xFF00_FF00);
+        m.bus_write_physical(DMA2D_CMD_ADDR, cmd);
+    }
+
+    #[test]
+    fn huge_rect_with_stride_one_stays_in_vram() {
+        // A buggy guest: WIDTH = HEIGHT = u32::MAX with STRIDE = 1. Every
+        // command must return without a host allocation failure, and nothing
+        // before the destination may change.
+        for cmd in ALL_CMDS {
+            let mut m = Machine::new(false, true);
+            let len = m.devices.display.vram.len();
+            let origin = len - 64;
+            draw_raw(&mut m, cmd, origin, u32::MAX, u32::MAX, 1);
+            assert_eq!(m.devices.display.vram.len(), len, "cmd {cmd}");
+            assert!(
+                m.devices.display.vram[..origin].iter().all(|&p| p == 0),
+                "cmd {cmd} wrote before the destination"
+            );
+        }
+    }
+
+    #[test]
+    fn rows_wider_than_the_stride_stay_bounded() {
+        // STRIDE < WIDTH makes the rows overlap. Rows are clamped to the
+        // stride, so the work is bounded by the VRAM size rather than by
+        // WIDTH x HEIGHT, and the call returns quickly even from origin 0.
+        for cmd in ALL_CMDS {
+            let mut m = Machine::new(false, true);
+            let len = m.devices.display.vram.len();
+            draw_raw(&mut m, cmd, 0, 1 << 20, u32::MAX, 1);
+            assert_eq!(m.devices.display.vram.len(), len, "cmd {cmd}");
+        }
+        // FILL then covers every pixel from the origin to the end of VRAM.
+        let mut m = Machine::new(false, true);
+        let len = m.devices.display.vram.len();
+        let origin = len - 100;
+        draw_raw(&mut m, DMA2D_CMD_FILL, origin, 16, u32::MAX, 4);
+        assert!(m.devices.display.vram[..origin].iter().all(|&p| p == 0));
+        assert!(m.devices.display.vram[origin..]
+            .iter()
+            .all(|&p| p == 0x00FF00));
+    }
+
+    #[test]
+    fn non_display_stride_keeps_skipping_rows_that_do_not_fit() {
+        // A plain off-display stride: whole rows are written, and the last
+        // row that would run past VRAM is skipped entirely, as before.
+        let mut m = Machine::new(false, true);
+        draw_raw(&mut m, DMA2D_CMD_FILL, 0, 10, 5, 100);
+        let vram = &m.devices.display.vram;
+        for y in 0..5 {
+            assert!(vram[y * 100..y * 100 + 10].iter().all(|&p| p == 0x00FF00));
+            assert!(vram[y * 100 + 10..y * 100 + 100].iter().all(|&p| p == 0));
+        }
+        assert_eq!(vram[500], 0);
+
+        let mut m = Machine::new(false, true);
+        let len = m.devices.display.vram.len();
+        let origin = len - 250;
+        draw_raw(&mut m, DMA2D_CMD_FILL, origin, 60, 10, 100);
+        let vram = &m.devices.display.vram;
+        assert_eq!(vram[origin], 0x00FF00);
+        assert_eq!(vram[origin + 159], 0x00FF00);
+        // Row 2 would end 10 pixels past VRAM, so none of it is written.
+        assert!(vram[origin + 160..].iter().all(|&p| p == 0));
     }
 
     #[test]
