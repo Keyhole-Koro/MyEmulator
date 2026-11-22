@@ -288,7 +288,8 @@ fn settle(machine: &mut Machine) -> Result<(), (&'static str, String, Value)> {
 }
 
 fn u32_param(value: &Value, key: &str) -> Result<u32, (&'static str, String, Value)> {
-    value.get(key).and_then(Value::as_u64).map(|v| v as u32)
+    // try_from rather than `as`: 2^32 must be rejected, not read as 0.
+    value.get(key).and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok())
         .ok_or_else(|| ("invalid_params", format!("{} must be an unsigned integer", key), value.clone()))
 }
 
@@ -327,4 +328,87 @@ fn reply(value: Value) {
     let _ = serde_json::to_writer(&mut stdout, &value);
     let _ = writeln!(stdout);
     let _ = stdout.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bool_param, button_param, key_code, u32_param};
+    use crate::constants::{
+        KEY_ENTER, KEY_ESCAPE, KEY_PAGE_DOWN, MOUSE_BUTTON_LEFT, MOUSE_BUTTON_MIDDLE,
+        MOUSE_BUTTON_RIGHT,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn u32_param_accepts_the_whole_u32_range() {
+        assert_eq!(u32_param(&json!({"x": 0}), "x").unwrap(), 0);
+        assert_eq!(
+            u32_param(&json!({"x": 4294967295u64}), "x").unwrap(),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn u32_param_rejects_what_does_not_fit() {
+        for params in [
+            json!({"x": 4294967296u64}),
+            json!({"x": 4294967297u64}),
+            json!({"x": u64::MAX}),
+            json!({"x": -1}),
+            json!({"x": 1.5}),
+            json!({"x": "1"}),
+            json!({"x": null}),
+            json!({}),
+        ] {
+            let (code, _, details) = u32_param(&params, "x").unwrap_err();
+            assert_eq!(code, "invalid_params", "{params}");
+            assert_eq!(details, params);
+        }
+    }
+
+    #[test]
+    fn bool_param_defaults_and_rejects_non_booleans() {
+        assert!(bool_param(&json!({}), "all", true).unwrap());
+        assert!(!bool_param(&json!({"all": null}), "all", false).unwrap());
+        assert!(bool_param(&json!({"all": true}), "all", false).unwrap());
+        assert!(!bool_param(&json!({"all": false}), "all", true).unwrap());
+        for value in [json!(1), json!("true"), json!([])] {
+            let (code, _, details) = bool_param(&json!({"all": value}), "all", false).unwrap_err();
+            assert_eq!(code, "invalid_params");
+            assert_eq!(details, value);
+        }
+    }
+
+    #[test]
+    fn button_param_names_and_default() {
+        assert_eq!(button_param(&json!({})).unwrap(), MOUSE_BUTTON_LEFT);
+        assert_eq!(
+            button_param(&json!({"button": "left"})).unwrap(),
+            MOUSE_BUTTON_LEFT
+        );
+        assert_eq!(
+            button_param(&json!({"button": "right"})).unwrap(),
+            MOUSE_BUTTON_RIGHT
+        );
+        assert_eq!(
+            button_param(&json!({"button": "middle"})).unwrap(),
+            MOUSE_BUTTON_MIDDLE
+        );
+        let (code, _, _) = button_param(&json!({"button": "back"})).unwrap_err();
+        assert_eq!(code, "invalid_params");
+    }
+
+    #[test]
+    fn key_code_names_single_characters_and_unknowns() {
+        assert_eq!(key_code("Enter"), Some(KEY_ENTER));
+        assert_eq!(key_code("return"), Some(KEY_ENTER));
+        assert_eq!(key_code("ESC"), Some(KEY_ESCAPE));
+        assert_eq!(key_code("PageDown"), Some(KEY_PAGE_DOWN));
+        // A single character is its own code, lowercased like the names.
+        assert_eq!(key_code("a"), Some('a' as u32));
+        assert_eq!(key_code("A"), Some('a' as u32));
+        assert_eq!(key_code("\u{3042}"), Some(0x3042));
+        assert_eq!(key_code(""), None);
+        assert_eq!(key_code("f13"), None);
+    }
 }

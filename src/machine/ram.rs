@@ -60,3 +60,55 @@ impl Ram {
         self.write(address, &value.to_be_bytes());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Ram;
+
+    #[test]
+    fn range_rejects_zero_length() {
+        let ram = Ram::new(16);
+        assert_eq!(ram.range(0, 0), None);
+        assert_eq!(ram.read(0, 0), None);
+    }
+
+    #[test]
+    fn range_reaches_exactly_the_last_byte() {
+        let ram = Ram::new(16);
+        assert_eq!(ram.range(12, 4), Some(12..16));
+        assert_eq!(ram.range(0, 16), Some(0..16));
+        assert_eq!(ram.range(15, 1), Some(15..16));
+    }
+
+    #[test]
+    fn range_rejects_one_byte_past_the_end() {
+        let ram = Ram::new(16);
+        assert_eq!(ram.range(13, 4), None);
+        assert_eq!(ram.range(0, 17), None);
+        assert_eq!(ram.range(16, 1), None);
+    }
+
+    #[test]
+    fn range_rejects_an_end_that_overflows_u32() {
+        let ram = Ram::new(16);
+        assert_eq!(ram.range(u32::MAX, 1), None);
+        assert_eq!(ram.range(u32::MAX - 1, 4), None);
+        assert_eq!(ram.range(0, u32::MAX as usize + 1), None);
+    }
+
+    #[test]
+    fn accesses_out_of_range_change_nothing() {
+        let mut ram = Ram::new(16);
+        ram.write_word(12, 0x0102_0304);
+        assert_eq!(ram.as_slice()[12..], [1, 2, 3, 4]);
+        assert_eq!(ram.read_word(12), 0x0102_0304);
+        // A word straddling the end is neither written nor read.
+        assert!(!ram.write(14, &[9, 9, 9, 9]));
+        ram.write_word(14, 0xFFFF_FFFF);
+        assert_eq!(ram.as_slice()[12..], [1, 2, 3, 4]);
+        assert_eq!(ram.read_word(14), 0);
+        ram.write_byte(16, 7);
+        assert_eq!(ram.read_byte(16), 0);
+        assert_eq!(ram.as_slice().len(), 16);
+    }
+}
