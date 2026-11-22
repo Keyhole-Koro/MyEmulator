@@ -12,18 +12,21 @@
 // reach the server. Measured on the same host: ~1.1 ms per frame, or ~2.9 ms
 // when forcing a round trip with XSync.
 //
-// present() uses the XSync round trip (see its own comment): the shared
-// segment has no double buffering, so the next present() call starts
-// overwriting the same memory the server may still be mid-read on. Skipping
-// the wait let a slow/busy server observe a torn frame -- a mix of the old
-// and new pixels, visible as small stale fragments (e.g. a previous cursor
-// position) frozen on screen. ~2.9 ms/frame is still ~340 fps of budget, far
-// above the 60 Hz this scans out at, so the wait costs nothing perceptible.
+// A put is asynchronous. XShmPutImage asks for a completion event, and the
+// segment is not written again until that event has arrived (ready()), so
+// the server never reads a half-written frame -- the tearing an unsynced
+// single segment used to show. The CPU thread never waits for the server:
+// the old present() ended each frame with an XSync round trip, ~3.7 ms at
+// 2048x1536 on this host, 60 times a second, out of the guest's own time.
+// A put that the server is still reading just makes the caller try again at
+// its next refresh tick. put() can also send a sub-rectangle, so a cursor
+// that moved over an unchanged frame costs a few hundred pixels.
 //
 // MIT-SHM only works when the server is on this machine. present() reports
 // failure rather than panicking so the caller can fall back to minifb.
 
 use std::os::raw::{c_char, c_int, c_uint, c_ulong, c_void};
+use std::time::{Duration, Instant};
 use x11_dl::xlib;
 
 #[repr(C)]
@@ -47,6 +50,7 @@ type CreateFn = unsafe extern "C" fn(
 ) -> *mut xlib::XImage;
 type AttachFn = unsafe extern "C" fn(*mut xlib::Display, *mut XShmSegmentInfo) -> c_int;
 type DetachFn = unsafe extern "C" fn(*mut xlib::Display, *mut XShmSegmentInfo) -> c_int;
+type EventBaseFn = unsafe extern "C" fn(*mut xlib::Display) -> c_int;
 type PutFn = unsafe extern "C" fn(
     *mut xlib::Display,
     c_ulong,
@@ -61,6 +65,13 @@ type PutFn = unsafe extern "C" fn(
     c_int,
 ) -> c_int;
 
+// ShmCompletion is event 0 of the extension (X11/extensions/XShm.h).
+const SHM_COMPLETION: c_int = 0;
+// A completion that never comes (an unmapped window, a server that dropped
+// the event) must not stop presenting for good: after this long the next
+// ready() waits for the server once and carries on.
+const PUT_TIMEOUT: Duration = Duration::from_millis(200);
+
 pub struct ShmPresenter {
     xlib: xlib::Xlib,
     display: *mut xlib::Display,
@@ -68,6 +79,8 @@ pub struct ShmPresenter {
     gc: xlib::GC,
     image: *mut xlib::XImage,
     info: Box<XShmSegmentInfo>,
+    completion: c_int,
+    in_flight: Option<Instant>,
     pixels: *mut u32,
     len: usize,
     put: PutFn,
@@ -98,6 +111,7 @@ impl ShmPresenter {
             let attach: AttachFn = std::mem::transmute(sym(b"XShmAttach\0")?);
             let detach: DetachFn = std::mem::transmute(sym(b"XShmDetach\0")?);
             let put: PutFn = std::mem::transmute(sym(b"XShmPutImage\0")?);
+            let event_base: EventBaseFn = std::mem::transmute(sym(b"XShmGetEventBase\0")?);
 
             // Our own connection to the server. minifb owns its display and is
             // not thread-safe to share; a second connection to the same window
@@ -141,6 +155,13 @@ impl ShmPresenter {
                 return None;
             }
 
+            // pixels() hands out the segment as rows of `width` words.
+            if (*image).bytes_per_line as usize != width as usize * 4 {
+                (xlib.XDestroyImage)(image);
+                (xlib.XFreeGC)(display, gc);
+                (xlib.XCloseDisplay)(display);
+                return None;
+            }
             let size = (*image).bytes_per_line as usize * height as usize;
             let shmid = libc::shmget(libc::IPC_PRIVATE, size, libc::IPC_CREAT | 0o600);
             if shmid < 0 {
@@ -176,6 +197,7 @@ impl ShmPresenter {
             // and this process detach, so a crash cannot leak it.
             libc::shmctl(shmid, libc::IPC_RMID, std::ptr::null_mut());
 
+            let completion = event_base(display) + SHM_COMPLETION;
             Some(ShmPresenter {
                 xlib,
                 display,
@@ -183,6 +205,8 @@ impl ShmPresenter {
                 gc,
                 image,
                 info,
+                completion,
+                in_flight: None,
                 pixels: addr as *mut u32,
                 len: (width * height) as usize,
                 put,
@@ -238,30 +262,57 @@ impl ShmPresenter {
     }
 
     // Copy one frame into the shared segment and ask the server to blit it.
-    pub fn present(&mut self, frame: &[u32], width: u32, height: u32) {
-        let n = self.len.min(frame.len());
+    // Whether the segment may be written: the server has finished reading
+    // the last put. Never blocks, except once after PUT_TIMEOUT.
+    pub fn ready(&mut self) -> bool {
+        let Some(since) = self.in_flight else {
+            return true;
+        };
         unsafe {
-            std::ptr::copy_nonoverlapping(frame.as_ptr(), self.pixels, n);
+            let mut event: xlib::XEvent = std::mem::zeroed();
+            if (self.xlib.XCheckTypedEvent)(self.display, self.completion, &mut event) != 0 {
+                self.in_flight = None;
+                return true;
+            }
+            if since.elapsed() >= PUT_TIMEOUT {
+                (self.xlib.XSync)(self.display, 0);
+                while (self.xlib.XCheckTypedEvent)(self.display, self.completion, &mut event) != 0 {}
+                self.in_flight = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    // The shared frame, row by row; only while ready().
+    pub fn pixels(&mut self) -> &mut [u32] {
+        debug_assert!(self.in_flight.is_none());
+        unsafe { std::slice::from_raw_parts_mut(self.pixels, self.len) }
+    }
+
+    // Sends the rectangle (x, y, width, height) of the segment to the same
+    // place in the window, without waiting for the server to read it.
+    pub fn put(&mut self, x: u32, y: u32, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        unsafe {
             (self.put)(
                 self.display,
                 self.window,
                 self.gc,
                 self.image,
-                0,
-                0,
-                0,
-                0,
+                x as c_int,
+                y as c_int,
+                x as c_int,
+                y as c_int,
                 width,
                 height,
-                0,
+                1, // send_event: the completion ready() waits for
             );
-            // Wait for the server to finish reading the shared segment before
-            // returning, so the caller can safely overwrite it with the next
-            // frame (see the module comment: without this, a slow server can
-            // still be mid-blit when we start writing new pixels into the
-            // same memory, tearing the frame it's displaying).
-            (self.xlib.XSync)(self.display, 0);
+            (self.xlib.XFlush)(self.display);
         }
+        self.in_flight = Some(Instant::now());
     }
 }
 

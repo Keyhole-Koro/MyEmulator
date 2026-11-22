@@ -10,7 +10,8 @@ use crate::constants::{
     MMU_FAULT_ADDR, MMU_FAULT_STATUS_ADDR, MMU_PDBR_ADDR, MOUSE_BUTTONS_ADDR, MOUSE_EVT_BTN_ADDR,
     MOUSE_EVT_POP_ADDR, MOUSE_EVT_STATUS_ADDR, MOUSE_EVT_WHEEL_ADDR, MOUSE_EVT_X_ADDR,
     MOUSE_EVT_Y_ADDR, MOUSE_X_ADDR, MOUSE_Y_ADDR, SERIAL_LSR_ADDR, SERIAL_RX_ADDR, SERIAL_TX_ADDR,
-    SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR, TIMER_ADDR, VRAM_BASE,
+    SSD_ADDR_ADDR, SSD_BLOCK_ADDR, SSD_CMD_ADDR, SSD_STATUS_ADDR, TIMELINE_BEGIN_ADDR,
+    TIMELINE_END_ADDR, TIMELINE_LENGTH_ADDR, TIMELINE_MARK_ADDR, TIMER_ADDR, VRAM_BASE,
     is_io_address,
     is_ram_address, is_vram_address,
 };
@@ -244,7 +245,17 @@ impl Machine {
             SSD_CMD_ADDR => self.service_ssd_dma(value),
             DMA2D_CMD_ADDR => self.service_dma2d(value),
             CURSOR_X_ADDR => self.devices.display.cursor_x = value,
-            CURSOR_Y_ADDR => self.devices.display.cursor_y = value,
+            CURSOR_Y_ADDR => {
+                self.devices.display.cursor_y = value;
+                // x is written first: the move is complete now.
+                self.timeline_instant(super::timeline::SCREEN, "cursor");
+            }
+            TIMELINE_LENGTH_ADDR => {
+                if let Some(timeline) = self.execution.timeline.as_mut() {
+                    timeline.name_length = value;
+                }
+            }
+            TIMELINE_BEGIN_ADDR | TIMELINE_END_ADDR | TIMELINE_MARK_ADDR => self.timeline_marker(address, value),
             CURSOR_CTRL_ADDR => {
                 self.devices.display.cursor_visible = value & 1 != 0;
                 self.devices.display.cursor_shape = (value >> CURSOR_SHAPE_SHIFT) & CURSOR_SHAPE_MASK;
@@ -253,6 +264,7 @@ impl Machine {
                 if value != 0 {
                     self.devices.display.swap();
                     self.note_display_swap();
+                    self.timeline_instant(super::timeline::SCREEN, "swap");
                 }
             }
             IRQ_CAUSE_ADDR => self.interrupts.acknowledge(value), // W1C acknowledgement.

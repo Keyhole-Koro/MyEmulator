@@ -58,6 +58,14 @@ pub const DMA2D_STRIDE_ADDR: u32 = IO_BASE + 0x30;
 pub const DMA2D_CMD_ADDR: u32 = IO_BASE + 0x34; // W: DMA2D_CMD_*
 
 pub const DISPLAY_SWAP_ADDR: u32 = IO_BASE + 0x38;
+
+// The frame timeline (machine/timeline.rs): write a name's length to LENGTH,
+// then its address to BEGIN, END or MARK to open a span, close it, or mark an
+// instant. Ignored unless a timeline is being recorded.
+pub const TIMELINE_LENGTH_ADDR: u32 = IO_BASE + 0x1C0;
+pub const TIMELINE_BEGIN_ADDR: u32 = IO_BASE + 0x1C4;
+pub const TIMELINE_END_ADDR: u32 = IO_BASE + 0x1C8;
+pub const TIMELINE_MARK_ADDR: u32 = IO_BASE + 0x1CC;
 pub const DISPLAY_WIDTH_ADDR: u32 = IO_BASE + 0xD0; // R: pixel width
 pub const DISPLAY_HEIGHT_ADDR: u32 = IO_BASE + 0xD4; // R: pixel height
 

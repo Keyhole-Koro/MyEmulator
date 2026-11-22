@@ -98,6 +98,14 @@ pixel and commands write nothing. An empty clip therefore cannot be handed
 to the device: a guest whose clip is empty must not submit commands at all.
 The datapath is `src/machine/dma2d.rs`.
 
+A command runs in the emulator the moment the guest writes `CMD`, so its
+cost is wall time that no guest instruction count shows. ROUND_RECT, its
+outline and SHADOW work out anti-aliased coverage per pixel only near the
+edges and corners: deeper inside, the coverage is exactly full, and the
+solid middle is filled (or, for an outline, left alone) without the
+distance formula -- the same pixels, a few times faster on a window-sized
+rectangle (`solid_span`; a test compares it with the per-pixel loops).
+
 ### Keyboard and mouse
 
 Key presses, releases and host-translated characters land in one FIFO
@@ -106,6 +114,37 @@ keystroke arrives as `DOWN 'a'`, `CHAR 'A'`, `UP 'a'`. Printable keys use
 their lowercase ASCII as the code, everything else a `KEY_*` value `>= 0x100`.
 The mouse reports left/right/middle buttons (`MOUSE_BUTTON_*`) and wheel
 steps per event (`MOUSE_EVT_WHEEL`).
+
+### Presenting frames
+
+The window gets a frame when the guest swaps (`DISPLAY_SWAP`) or the cursor
+moves, not at every refresh: an unchanged screen costs nothing but a
+keepalive twice a second. With MIT-SHM the hardware cursor is drawn straight
+into the shared segment; when only the cursor moved, just the pixels under
+its old and new sprite are restored and sent. A put is asynchronous -- the
+segment is not written again until the server's completion event arrives --
+so the CPU thread never waits on the X server (`src/machine/host_display.rs`,
+`src/machine/shm_present.rs`). `--io-stats` counts the presents by kind and
+reports the guest's measured speed.
+
+### Frame timeline
+
+`--timeline out.json` records, on the wall clock, what the guest and the
+emulator did, and writes a Chrome trace at exit (open it at
+https://ui.perfetto.dev; `python3 tools/MyProfiler/myprofiler.py frames
+out.json` summarizes it). Its tracks:
+
+- **guest CPU**: spans the guest marks through the timeline registers
+  (`system/MyKernel/src/debug/timeline.mln`: MyOS marks each compositor pass,
+  its input, requests and paint, and each window's paint under its title),
+  device interrupts, and the guest's idle time (WFI); a counter of its speed.
+- **emulator (host)**: presenting a frame and pumping the window's events.
+- **screen**: guest swaps and cursor moves.
+- **2D DMA (host)**: each DMA command over 4096 pixels or 200 µs, with its size.
+
+Every event carries the instructions retired so far. In control-stdio mode,
+`timeline.start` begins a recording and `timeline.write {"path"}` writes and
+ends it. `make run ARGS="--timeline build/timeline.json"` records a session.
 
 ### Screenshots
 
@@ -125,7 +164,8 @@ Lines, while guest serial output and the emulator's own messages (the DEBUG
 instruction's registers and memory dump, `--verbose` and `--trace` logs) go
 to stderr. Start with `session.hello`,
 then use `os.ready`, `dom.snapshot`, `input.pointer.sequence`,
-`input.key.type`, `input.key.press`, and `screen.screenshot` (see
+`input.key.type`, `input.key.press`, `screen.screenshot`, `screen.cursor`
+(where the hardware cursor is) and `timeline.start` / `timeline.write` (see
 `src/control_stdio.rs`). DOM snapshots cross a dedicated automation MMIO
 bridge; they do not type a command into the OS shell or parse serial markers.
 

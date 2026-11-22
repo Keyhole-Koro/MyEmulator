@@ -72,9 +72,36 @@ fn round_rect_distance(px: f32, py: f32, w: f32, h: f32, r: f32) -> f32 {
     outside + inside - r
 }
 
+// The columns of row `y` (relative to a w x h rectangle) that lie at least
+// two pixels inside the rounded rectangle inset by `inset` on every side,
+// with corner radius `r`: (start, end), empty when start >= end. There the
+// shape's signed distance is at most -2, so round_rect_coverage is exactly 1
+// and a shadow's falloff exactly full -- the per-pixel formulas would give
+// the same answer, so those pixels can skip them.
+//
+// Why -2: away from the top and bottom corner bands (the row is at least
+// r + 2 from both edges) a pixel's distance is minus its distance to the
+// nearer side, whichever way the box's q terms fall; two pixels from the
+// sides makes it -2. The radius used is the register's, never smaller than
+// the clamped one round_rect_distance uses, so the band is never too thin.
+fn solid_span(w: usize, h: usize, inset: usize, r: f32, y: usize) -> (usize, usize) {
+    let corner = r.max(0.0).ceil() as usize + 2;
+    let iw = w.saturating_sub(2 * inset);
+    let ih = h.saturating_sub(2 * inset);
+    if y < inset || iw < 5 {
+        return (0, 0);
+    }
+    let yi = y - inset;
+    if yi < corner || yi + corner + 1 > ih {
+        return (0, 0);
+    }
+    (inset + 2, inset + iw - 2)
+}
+
 // The destination rectangle after the scissor: `x0..x1` / `y0..y1` are the
 // pixels actually written, `ox`/`oy` their offset from the unclipped origin
 // (so per-pixel shapes and source fetches stay aligned with the full rect).
+#[derive(Clone, Copy)]
 struct Dest {
     origin: usize, // vram index of the unclipped top-left
     stride: usize,
@@ -84,6 +111,26 @@ struct Dest {
     y0: usize,
     x1: usize,
     y1: usize,
+}
+
+// Commands smaller than this (a glyph's mask) stay off the timeline unless
+// they take long: there are hundreds a frame.
+const TIMELINE_MIN_PIXELS: usize = 4096;
+const TIMELINE_MIN_TIME: std::time::Duration = std::time::Duration::from_micros(200);
+
+fn dma2d_name(cmd: u32) -> &'static str {
+    match cmd {
+        DMA2D_CMD_FILL => "dma fill",
+        DMA2D_CMD_BLEND_FILL => "dma blend fill",
+        DMA2D_CMD_COPY => "dma copy",
+        DMA2D_CMD_COPY_BLEND => "dma copy blend",
+        DMA2D_CMD_MASK_A8 => "dma mask",
+        DMA2D_CMD_GRADIENT_V | DMA2D_CMD_GRADIENT_H => "dma gradient",
+        DMA2D_CMD_ROUND_RECT => "dma round rect",
+        DMA2D_CMD_ROUND_RECT_OUTLINE => "dma round outline",
+        DMA2D_CMD_SHADOW => "dma shadow",
+        _ => "dma",
+    }
 }
 
 impl Machine {
@@ -213,6 +260,24 @@ impl Machine {
         let Some(d) = self.dma2d_dest() else {
             return;
         };
+        // The work is the emulator's, done the moment the guest writes CMD:
+        // no guest instruction shows it, so the timeline does.
+        let started = self.execution.timeline.is_some().then(std::time::Instant::now);
+        self.run_dma2d(cmd, &d);
+        if let Some(started) = started {
+            let pixels = (d.x1 - d.x0) * (d.y1 - d.y0);
+            if pixels >= TIMELINE_MIN_PIXELS || started.elapsed() >= TIMELINE_MIN_TIME {
+                let name = format!("{} {}x{}", dma2d_name(cmd), d.x1 - d.x0, d.y1 - d.y0);
+                let instrs = self.cpu.instrs_retired;
+                if let Some(timeline) = self.execution.timeline.as_mut() {
+                    timeline.span(super::timeline::DMA, &name, started, instrs);
+                }
+            }
+        }
+    }
+
+    fn run_dma2d(&mut self, cmd: u32, d: &Dest) {
+        let d = *d;
         let color = self.dma2d_reg(DMA2D_COLOR_ADDR, 0);
         match cmd {
             DMA2D_CMD_FILL => {
@@ -306,7 +371,7 @@ impl Machine {
                 }
                 let (w, h) = (d.w as f32, d.h as f32);
                 let outline = cmd == DMA2D_CMD_ROUND_RECT_OUTLINE;
-                self.dma2d_for_each(&d, |x, y, dst| {
+                let shade = |x: usize, y: usize, dst: u32| {
                     let px = x as f32 + 0.5;
                     let py = y as f32 + 0.5;
                     let mut cov = round_rect_coverage(px, py, w, h, r);
@@ -322,7 +387,35 @@ impl Machine {
                         cov = (cov - inner).max(0.0);
                     }
                     blend_pixel(dst, color, (cov * a as f32 + 0.5) as u32)
-                });
+                };
+                // The solid middle (solid_span): a fill covers it exactly
+                // once, at alpha `a`; a ring's inner shape covers it too, so
+                // the ring leaves it as it was. Only the corners and the
+                // edges go through the coverage formula.
+                let (inset, solid_r) = if outline { (t as usize, (r - t).max(0.0)) } else { (0, r) };
+                let vram_len = self.devices.display.vram.len();
+                for y in d.y0..d.y1 {
+                    let row = d.origin + y * d.stride;
+                    if row + d.x1 > vram_len {
+                        break;
+                    }
+                    let (sa, sb) = solid_span(d.w, d.h, inset, solid_r, y);
+                    let sa = sa.clamp(d.x0, d.x1);
+                    let sb = sb.clamp(sa, d.x1);
+                    let vram = &mut self.devices.display.vram[row..row + d.x1];
+                    for x in (d.x0..sa).chain(sb..d.x1) {
+                        vram[x] = shade(x, y, vram[x]);
+                    }
+                    if !outline {
+                        if a >= 255 {
+                            vram[sa..sb].fill(color & 0x00FF_FFFF);
+                        } else {
+                            for px in &mut vram[sa..sb] {
+                                *px = blend_pixel(*px, color, a);
+                            }
+                        }
+                    }
+                }
             }
             DMA2D_CMD_SHADOW => {
                 // DEST is the rectangle casting the shadow; the shadow itself
@@ -361,7 +454,22 @@ impl Machine {
                 let spread_f = spread as f32;
                 for sy in ey0..ey1 {
                     let row = sy as usize * d.stride;
-                    for sx in ex0..ex1 {
+                    // Well inside the caster the falloff is full: the same
+                    // blend at a_max for every pixel (see solid_span).
+                    let ry = sy - oy;
+                    let (sa, sb) = if ry >= 0 && (ry as usize) < d.h {
+                        let (a, b) = solid_span(d.w, d.h, 0, r, ry as usize);
+                        ((ox + a as i64).clamp(ex0, ex1), (ox + b as i64).clamp(ex0, ex1))
+                    } else {
+                        (ex0, ex0)
+                    };
+                    let (sa, sb) = if sa < sb { (sa, sb) } else { (ex0, ex0) };
+                    if sa < sb && row + (sb as usize) <= self.devices.display.vram.len() {
+                        for px in &mut self.devices.display.vram[row + sa as usize..row + sb as usize] {
+                            *px = blend_pixel(*px, color, a_max);
+                        }
+                    }
+                    for sx in (ex0..sa).chain(sb.max(sa)..ex1) {
                         let px = (sx - ox) as f32 + 0.5;
                         let py = (sy - oy) as f32 + 0.5;
                         let dist = round_rect_distance(px, py, w, h, r);
@@ -418,6 +526,137 @@ mod tests {
 
     fn pixel(m: &Machine, x: usize, y: usize) -> u32 {
         m.devices.display.vram[y * DISPLAY_WIDTH + x]
+    }
+
+    // The per-pixel loops the solid spans replaced, kept as the reference:
+    // every pixel of the display must come out the same.
+    fn reference(m: &Machine, cmd: u32, vram: &mut [u32]) {
+        use super::round_rect_distance;
+        let Some(d) = m.dma2d_dest() else { return };
+        let color = m.dma2d_reg(DMA2D_COLOR_ADDR, 0);
+        match cmd {
+            DMA2D_CMD_ROUND_RECT | DMA2D_CMD_ROUND_RECT_OUTLINE => {
+                let r = m.dma2d_reg(DMA2D_RADIUS_ADDR, 0) as f32;
+                let t = m.dma2d_reg(DMA2D_SPREAD_ADDR, 1).max(1) as f32;
+                let mut a = color >> 24;
+                if a == 0 {
+                    a = 255;
+                }
+                let (w, h) = (d.w as f32, d.h as f32);
+                for y in d.y0..d.y1 {
+                    let row = d.origin + y * d.stride;
+                    if row + d.x1 > vram.len() {
+                        break;
+                    }
+                    for x in d.x0..d.x1 {
+                        let px = x as f32 + 0.5;
+                        let py = y as f32 + 0.5;
+                        let mut cov = round_rect_coverage(px, py, w, h, r);
+                        if cmd == DMA2D_CMD_ROUND_RECT_OUTLINE {
+                            let inner = round_rect_coverage(px - t, py - t, w - 2.0 * t, h - 2.0 * t, (r - t).max(0.0));
+                            cov = (cov - inner).max(0.0);
+                        }
+                        vram[row + x] = blend_pixel(vram[row + x], color, (cov * a as f32 + 0.5) as u32);
+                    }
+                }
+            }
+            DMA2D_CMD_SHADOW => {
+                let r = m.dma2d_reg(DMA2D_RADIUS_ADDR, 0) as f32;
+                let spread = m.dma2d_reg(DMA2D_SPREAD_ADDR, 8).max(1) as usize;
+                let mut a_max = color >> 24;
+                if a_max == 0 {
+                    a_max = 128;
+                }
+                let (w, h) = (d.w as f32, d.h as f32);
+                let ox = (d.origin % d.stride) as i64;
+                let oy = (d.origin / d.stride) as i64;
+                let ex0 = (ox - spread as i64).max(0);
+                let ey0 = (oy - spread as i64).max(0);
+                let ex1 = (ox + d.w as i64 + spread as i64).min(DISPLAY_WIDTH as i64);
+                let ey1 = (oy + d.h as i64 + spread as i64).min(crate::constants::DISPLAY_HEIGHT as i64);
+                let (ex0, ey0, ex1, ey1) = match m.dma2d_scissor() {
+                    Some((cx0, cy0, cx1, cy1)) => (ex0.max(cx0), ey0.max(cy0), ex1.min(cx1), ey1.min(cy1)),
+                    None => (ex0, ey0, ex1, ey1),
+                };
+                if d.stride != DISPLAY_WIDTH || ex1 <= ex0 || ey1 <= ey0 {
+                    return;
+                }
+                for sy in ey0..ey1 {
+                    let row = sy as usize * d.stride;
+                    for sx in ex0..ex1 {
+                        let px = (sx - ox) as f32 + 0.5;
+                        let py = (sy - oy) as f32 + 0.5;
+                        let dist = round_rect_distance(px, py, w, h, r);
+                        let t = (1.0 - dist / spread as f32).clamp(0.0, 1.0);
+                        let a = (a_max as f32 * t * t + 0.5) as u32;
+                        if a > 0 {
+                            let idx = row + sx as usize;
+                            if idx < vram.len() {
+                                vram[idx] = blend_pixel(vram[idx], color, a);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn solid_spans_paint_exactly_what_every_pixel_did() {
+        let mut m = Machine::new(false, true);
+        let pattern: Vec<u32> = (0..m.devices.display.vram.len() as u32)
+            .map(|i| i.wrapping_mul(2654435761) & 0x00FF_FFFF)
+            .collect();
+        m.devices.display.vram.copy_from_slice(&pattern);
+        let mut expected = pattern.clone();
+        let (dw, dh) = (DISPLAY_WIDTH as u32, crate::constants::DISPLAY_HEIGHT as u32);
+        let mut cases = 0;
+        for cmd in [DMA2D_CMD_ROUND_RECT, DMA2D_CMD_ROUND_RECT_OUTLINE, DMA2D_CMD_SHADOW] {
+            for (w, h) in [(1, 1), (5, 9), (13, 13), (40, 26), (300, 120)] {
+                for r in [0, 1, 4, 12, 40] {
+                    for spread in [1, 3, 8] {
+                        for alpha in [0u32, 0x7A, 0xFF] {
+                            for (x, y) in [(100, 100), (dw - w / 2 - 1, dh - h / 2 - 1)] {
+                                for scissor in [None, Some((110, 95, 180, 400))] {
+                                    match scissor {
+                                        Some((x0, y0, x1, y1)) => set_scissor(&mut m, x0, y0, x1, y1),
+                                        None => set_scissor(&mut m, 0, 0, 0, 0),
+                                    }
+                                    m.bus_write_physical(DMA2D_DEST_ADDR, VRAM_BASE + (y * dw + x) * 4);
+                                    m.bus_write_physical(DMA2D_WIDTH_ADDR, w);
+                                    m.bus_write_physical(DMA2D_HEIGHT_ADDR, h);
+                                    m.bus_write_physical(DMA2D_STRIDE_ADDR, dw);
+                                    m.bus_write_physical(DMA2D_COLOR_ADDR, (alpha << 24) | 0x0033_9966);
+                                    m.bus_write_physical(DMA2D_RADIUS_ADDR, r);
+                                    m.bus_write_physical(DMA2D_SPREAD_ADDR, spread);
+                                    reference(&m, cmd, &mut expected);
+                                    m.bus_write_physical(DMA2D_CMD_ADDR, cmd);
+                                    // Nothing reaches past the rectangle and its spread:
+                                    // compare those rows, then put them back.
+                                    let lo = y.saturating_sub(spread + 1) as usize * DISPLAY_WIDTH;
+                                    let hi = (y + h + spread + 1).min(dh) as usize * DISPLAY_WIDTH;
+                                    let got = &m.devices.display.vram;
+                                    if let Some(i) = (lo..hi).find(|&i| got[i] != expected[i]) {
+                                        panic!(
+                                            "cmd {cmd} {w}x{h} at ({x},{y}) r={r} spread={spread} alpha={alpha:#x} \
+                                             scissor={scissor:?}: pixel ({}, {}) is {:#08x}, not {:#08x}",
+                                            i % DISPLAY_WIDTH, i / DISPLAY_WIDTH, got[i], expected[i]
+                                        );
+                                    }
+                                    m.devices.display.vram[lo..hi].copy_from_slice(&pattern[lo..hi]);
+                                    expected[lo..hi].copy_from_slice(&pattern[lo..hi]);
+                                    cases += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // And nothing outside those rows changed at all.
+        assert!(m.devices.display.vram == pattern, "a command wrote outside its rectangle");
+        assert_eq!(cases, 3 * 5 * 5 * 3 * 3 * 2 * 2);
     }
 
     const ALL_CMDS: [u32; 10] = [

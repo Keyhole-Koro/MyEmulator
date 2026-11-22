@@ -63,6 +63,13 @@ pub struct IoStats {
     pub instrs_at_last_swap: u64,
     pub instrs_per_frame_sum: u128,
     pub instrs_per_frame_max: u64,
+    // What each present sent (host_display.rs): a new guest frame, only the
+    // cursor, or the keepalive; and refresh ticks that found the server
+    // still reading the last put.
+    pub present_frames: u64,
+    pub present_cursor: u64,
+    pub present_again: u64,
+    pub present_busy: u64,
 }
 
 impl IoStats {
@@ -74,11 +81,15 @@ impl IoStats {
         }
     }
 
-    pub fn report(&self) {
+    /// `retired` is every guest instruction so far, for the guest's speed.
+    pub fn report(&self, retired: u64) {
         let wall = self
             .run_started
             .map(|t| t.elapsed().as_secs_f64())
             .unwrap_or(0.0);
+        // The guest's speed while it runs: the wall clock less its WFI sleeps.
+        let busy = wall - self.wfi_sleep_ns as f64 / 1e9;
+        let rate = if busy > 0.0 { retired as f64 / busy } else { 0.0 };
         eprintln!("\n=== host I/O timing (wall {:.2}s) ===", wall);
         eprintln!(
             "  window.update()      {:>8} calls  {:>8.3} ms total  {:>7.1} us/call",
@@ -93,10 +104,20 @@ impl IoStats {
             Self::avg_us(self.mouse_read_ns, self.mouse_read_calls)
         );
         eprintln!(
-            "  update_with_buffer() {:>8} calls  {:>8.3} ms total  {:>7.1} us/call",
+            "  present              {:>8} calls  {:>8.3} ms total  {:>7.1} us/call",
             self.scanout_calls,
             self.scanout_ns as f64 / 1e6,
             Self::avg_us(self.scanout_ns, self.scanout_calls)
+        );
+        eprintln!(
+            "    frames {}, cursor only {}, keepalive {}; server busy {}",
+            self.present_frames, self.present_cursor, self.present_again, self.present_busy
+        );
+        eprintln!(
+            "  guest speed          {:>8.2} M instrs/s  ({} instrs in {:.2} s not asleep)",
+            rate / 1e6,
+            retired,
+            busy
         );
         if self.scanout_calls > 1 {
             let gaps = self.scanout_calls - 1;
@@ -132,9 +153,10 @@ impl IoStats {
             let gaps = self.guest_swaps - 1;
             let ipf = self.instrs_per_frame_sum as f64 / gaps as f64;
             eprintln!(
-                "  guest work/frame     {:>8.0} instrs  ({:.2} ms of CPU at 12.4 M/s)  {} worst",
+                "  guest work/frame     {:>8.0} instrs  ({:.2} ms at {:.1} M/s)  {} worst",
                 ipf,
-                ipf / 12.4e6 * 1000.0,
+                if rate > 0.0 { ipf / rate * 1000.0 } else { 0.0 },
+                rate / 1e6,
                 self.instrs_per_frame_max
             );
             let avg = self.swap_gap_ns as f64 / gaps as f64 / 1e6;
@@ -295,6 +317,12 @@ impl Machine {
 
     pub fn swap_count(&self) -> u64 {
         self.devices.display.swap_count
+    }
+
+    /// The hardware cursor: x, y, whether it shows, and its shape.
+    pub fn cursor_state(&self) -> (u32, u32, bool, u32) {
+        let display = &self.devices.display;
+        (display.cursor_x, display.cursor_y, display.cursor_visible, display.cursor_shape)
     }
 
     pub fn set_trace_log<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {

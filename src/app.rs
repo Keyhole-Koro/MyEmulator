@@ -25,6 +25,9 @@ pub fn run() -> Result<(), String> {
     if args.profile_out.is_some() {
         machine.enable_profiler(LOAD_ADDRESS, args.profile_thread_var);
     }
+    if args.timeline_out.is_some() {
+        machine.start_timeline();
+    }
 
     // MYOS-004: control-stdio mode drives the machine from JSON Lines commands
     // on stdin instead of running it to completion, so it exits here rather
@@ -34,6 +37,9 @@ pub fn run() -> Result<(), String> {
         control_stdio::run(&mut machine)?;
         if let Some(profile_path) = &args.profile_out {
             machine.write_profile(profile_path)?;
+        }
+        if let Some(timeline_path) = &args.timeline_out {
+            machine.write_timeline(timeline_path)?;
         }
         return Ok(());
     }
@@ -98,11 +104,16 @@ fn execute(machine: &mut Machine, args: &Args) -> Result<(), String> {
     })
 }
 
-/// Writes the outputs requested for this run: the profile and the screenshot.
+/// Writes the outputs requested for this run: the profile, the timeline and
+/// the screenshot.
 fn write_run_outputs(machine: &mut Machine, args: &Args) -> Result<(), String> {
     if let Some(profile_path) = &args.profile_out {
         machine.write_profile(profile_path)?;
         println!("Profile written to {}", profile_path);
+    }
+    if let Some(timeline_path) = &args.timeline_out {
+        machine.write_timeline(timeline_path)?;
+        println!("Timeline written to {} (open it at https://ui.perfetto.dev)", timeline_path);
     }
     if let Some(shot) = &args.screenshot {
         machine.write_screenshot(shot)?;

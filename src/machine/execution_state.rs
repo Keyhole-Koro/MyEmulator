@@ -7,12 +7,14 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use super::profiler::Profiler;
+use super::timeline::Timeline;
 
 pub(super) struct ExecutionState {
     pub verbose: bool,
     pub control_stdio: bool,
     pub trace_log: Option<File>,
     pub profiler: Option<Profiler>,
+    pub timeline: Option<Timeline>,
     pub service_ticks: u16,
     // Where DEBUG writes memory_dump<pc>.txt: the working directory, unless a
     // test points it elsewhere.
@@ -27,6 +29,7 @@ impl ExecutionState {
             control_stdio: false,
             trace_log: None,
             profiler: None,
+            timeline: None,
             service_ticks: 0,
             debug_dump_dir: PathBuf::new(),
             pc_ring: std::env::var("MYEMU_PC_RING").ok().map(|value| {

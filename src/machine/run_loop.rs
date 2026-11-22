@@ -181,6 +181,10 @@ impl Machine {
                 }
                 self.poll_devices();
                 self.poll_input();
+                let instrs = self.cpu.instrs_retired;
+                if let Some(timeline) = self.execution.timeline.as_mut() {
+                    timeline.sample_speed(instrs);
+                }
                 if !self.maybe_refresh_display(false) {
                     self.cpu.halted = true;
                     break;
@@ -208,6 +212,10 @@ impl Machine {
                     if !wait.is_zero() {
                         let start = Instant::now();
                         std::thread::sleep(wait);
+                        let instrs = self.cpu.instrs_retired;
+                        if let Some(timeline) = self.execution.timeline.as_mut() {
+                            timeline.span(super::timeline::GUEST, "idle (WFI)", start, instrs);
+                        }
                         if let Some(stats) = self.io_stats.as_mut() {
                             let ns = start.elapsed().as_nanos();
                             stats.wfi_sleep_ns += ns;

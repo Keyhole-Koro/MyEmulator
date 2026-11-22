@@ -20,6 +20,8 @@ pub struct Args {
     pub disk_file: Option<String>,
     // When set, collect an instruction-level profile and write it as JSON here.
     pub profile_out: Option<String>,
+    // When set, record the frame timeline and write it here as a Chrome trace.
+    pub timeline_out: Option<String>,
     // The kernel word holding the current thread, so the profile keeps one call
     // stack per thread. The name comes from the kernel's symbol map.
     pub profile_thread_var: Option<u32>,
@@ -142,6 +144,9 @@ fn parse_arg_list(mut argv: impl Iterator<Item = String>) -> Result<Args, String
                 )?;
                 args.profile_thread_var = Some(parse_number(&raw, "--profile-thread-var")?);
             }
+            "--timeline" => {
+                args.timeline_out = Some(next_value(&mut argv, "--timeline", "an output JSON path")?);
+            }
             "--profile" => {
                 args.profile_out = Some(next_value(&mut argv, "--profile", "an output JSON path")?);
             }
@@ -209,6 +214,7 @@ mod tests {
                 "--profile-thread-var requires an address like 0x1D7E14",
             ),
             ("--profile", "--profile requires an output JSON path"),
+            ("--timeline", "--timeline requires an output JSON path"),
             (
                 "--timer-interval",
                 "--timer-interval requires a microsecond count",

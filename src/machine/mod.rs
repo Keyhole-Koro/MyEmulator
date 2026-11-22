@@ -25,6 +25,7 @@ mod serial;
 mod shm_present;
 mod ssd;
 mod stack;
+mod timeline;
 mod timer;
 mod trace;
 
@@ -176,9 +177,57 @@ impl Machine {
         });
     }
 
+    /// Starts recording the frame timeline (machine/timeline.rs), dropping
+    /// any recording already under way.
+    pub fn start_timeline(&mut self) {
+        self.execution.timeline = Some(timeline::Timeline::new(self.cpu.instrs_retired));
+    }
+
+    /// Writes the timeline recorded so far as a Chrome trace and stops.
+    pub fn write_timeline(&mut self, path: &str) -> Result<(), String> {
+        let timeline = self.execution.timeline.take().ok_or("no timeline is being recorded")?;
+        timeline.write(path)
+    }
+
+    fn timeline_instant(&mut self, track: u32, name: &str) {
+        let instrs = self.cpu.instrs_retired;
+        if let Some(timeline) = self.execution.timeline.as_mut() {
+            timeline.instant(track, name, instrs);
+        }
+    }
+
+    // A guest marker: `address` says which, `value` is the name's address,
+    // its length the last TIMELINE_LENGTH. The name is read through the
+    // current page tables without side effects; an unmapped byte ends it.
+    fn timeline_marker(&mut self, address: u32, value: u32) {
+        let Some(timeline) = self.execution.timeline.as_ref() else {
+            return;
+        };
+        let length = timeline.name_length.min(timeline::MAX_NAME);
+        let ram = self.memory.ram.as_slice();
+        let mut name = Vec::with_capacity(length as usize);
+        for i in 0..length {
+            let Some(physical) = self.memory.mmu.peek(ram, value.wrapping_add(i)) else {
+                break;
+            };
+            let Some(&byte) = ram.get(physical as usize) else {
+                break;
+            };
+            name.push(byte);
+        }
+        let name = String::from_utf8_lossy(&name).into_owned();
+        let instrs = self.cpu.instrs_retired;
+        let timeline = self.execution.timeline.as_mut().expect("checked above");
+        match address {
+            crate::constants::TIMELINE_BEGIN_ADDR => timeline.begin(timeline::GUEST, &name, instrs),
+            crate::constants::TIMELINE_END_ADDR => timeline.end(timeline::GUEST, &name, instrs),
+            _ => timeline.instant(timeline::GUEST, &name, instrs),
+        }
+    }
+
     pub fn report_io_stats(&self) {
         if let Some(stats) = &self.io_stats {
-            stats.report();
+            stats.report(self.cpu.instrs_retired);
         }
     }
 }

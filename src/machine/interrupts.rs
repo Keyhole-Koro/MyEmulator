@@ -206,6 +206,15 @@ impl Machine {
             self.interrupts.cause,
             trap.unwrap_or(0),
         );
+        // Device interrupts on the timeline; traps (syscalls, faults) are
+        // the guest's own work and would bury them.
+        if trap.is_none() && self.execution.timeline.is_some() {
+            let name = irq_name(self.interrupts.cause);
+            let instrs = self.cpu.instrs_retired;
+            if let Some(timeline) = self.execution.timeline.as_mut() {
+                timeline.instant(super::timeline::GUEST, name, instrs);
+            }
+        }
         self.write_prepared_word(pc_addr, self.cpu.program_counter);
         self.write_prepared_word(sr_addr, sr);
         if was_user {
@@ -408,5 +417,28 @@ mod tests {
             0,
             "IE at entry is recorded in the pushed SR"
         );
+    }
+}
+
+// The timeline's name for an interrupt: its device, or the first of several.
+fn irq_name(cause: u32) -> &'static str {
+    use crate::constants::{
+        IRQ_CAUSE_AUTOMATION, IRQ_CAUSE_KEYBOARD, IRQ_CAUSE_MOUSE, IRQ_CAUSE_SERIAL, IRQ_CAUSE_SSD,
+        IRQ_CAUSE_TIMER,
+    };
+    if cause & IRQ_CAUSE_MOUSE != 0 {
+        "irq mouse"
+    } else if cause & IRQ_CAUSE_KEYBOARD != 0 {
+        "irq keyboard"
+    } else if cause & IRQ_CAUSE_TIMER != 0 {
+        "irq timer"
+    } else if cause & IRQ_CAUSE_SSD != 0 {
+        "irq disk"
+    } else if cause & IRQ_CAUSE_SERIAL != 0 {
+        "irq serial"
+    } else if cause & IRQ_CAUSE_AUTOMATION != 0 {
+        "irq automation"
+    } else {
+        "irq"
     }
 }

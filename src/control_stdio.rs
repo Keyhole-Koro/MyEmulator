@@ -162,6 +162,12 @@ fn handle(machine: &mut Machine, request: Request) {
         "input.key.type" => key_type(machine, &request.params),
         "input.key.press" => key_press(machine, &request.params),
         "screen.screenshot" => screenshot(machine, &request.params),
+        "screen.cursor" => cursor(machine),
+        "timeline.start" => {
+            machine.start_timeline();
+            Ok(json!({}))
+        }
+        "timeline.write" => timeline_write(machine, &request.params),
         "profile.reset" => profile_reset(machine),
         "profile.write" => profile_write(machine, &request.params),
         "trace.start" => trace_start(machine, &request.params),
@@ -248,6 +254,21 @@ fn key_press(machine: &mut Machine, params: &Value) -> Result<Value, (&'static s
     machine.push_key_event(KBD_EVT_UP, code, mods);
     settle(machine)?;
     Ok(json!({"frame": machine.swap_count()}))
+}
+
+// Writes the timeline recorded since timeline.start (or --timeline) and stops.
+fn timeline_write(machine: &mut Machine, params: &Value) -> Result<Value, (&'static str, String, Value)> {
+    let path = params.get("path").and_then(Value::as_str)
+        .ok_or_else(|| ("invalid_params", "path must be a string".to_string(), Value::Null))?;
+    machine.write_timeline(path).map_err(|e| ("timeline_failed", e, Value::Null))?;
+    Ok(json!({"path": path}))
+}
+
+// Where the hardware cursor is, as the guest last set it. Read-only: the
+// guest does not run for it.
+fn cursor(machine: &mut Machine) -> Result<Value, (&'static str, String, Value)> {
+    let (x, y, visible, shape) = machine.cursor_state();
+    Ok(json!({"x": x, "y": y, "visible": visible, "shape": shape}))
 }
 
 fn screenshot(machine: &mut Machine, params: &Value) -> Result<Value, (&'static str, String, Value)> {
